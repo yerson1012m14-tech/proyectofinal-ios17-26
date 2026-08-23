@@ -14,8 +14,7 @@ static NSString *mcmVirtualRoot(void) {
     return nil;
 }
 
-// ✅ CORREGIDO: Busca directamente en el filesystem
-// El dylib FilzaApplySandboxExt.dylib ya escapó el sandbox al cargarse
+// ✅ Busca directamente en el filesystem (el dylib ya escapó el sandbox)
 static NSString *containerPath(NSString *bid) {
     if (bid.length == 0) return nil;
     asegurarMotor();
@@ -25,7 +24,6 @@ static NSString *containerPath(NSString *bid) {
         return mcmVirtualRoot();
     }
     
-    // Buscar directamente en /var/mobile/Containers/Data/Application/
     NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     
@@ -308,13 +306,9 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
                 }
             }
         }
-        NSString *root = mcmVirtualRoot();
-        if (root.length > 0) {
-            NSString *appData = [root stringByAppendingPathComponent:@"[MHA-C2] App Data"];
-            NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appData error:nil];
-            for (NSString *bid in entries ?: @[]) {
-                if (bid.length > 0 && ![bid hasPrefix:@"."]) [set addObject:bid];
-            }
+        NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
+        if (currentBundleId.length > 0) {
+            [set addObject:currentBundleId];
         }
         [self.apps removeAllObjects];
         [self.apps addObjectsFromArray:[set array]];
