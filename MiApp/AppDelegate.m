@@ -7,6 +7,24 @@
 #import "ScreenProtectionManager.h"
 #import "AppVersionChecker.h"
 #import "AppVersionLockViewController.h"
+#import <mach-o/dyld.h>
+#include <string.h>
+
+
+static BOOL XITForgeFilzaEngineLoaded(void) {
+    uint32_t count = _dyld_image_count();
+
+    for (uint32_t i = 0; i < count; i++) {
+        const char *imageName = _dyld_get_image_name(i);
+        if (!imageName) continue;
+
+        if (strstr(imageName, "FilzaApplySandboxExt.dylib") != NULL) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
 
 @interface AppDelegate ()
 
@@ -24,6 +42,15 @@
 
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+    /*
+     * Detecta únicamente si FilzaApplySandboxExt.dylib está cargado.
+     * No ejecuta TweakInit, sandbox_escape ni otras rutinas privilegiadas.
+     */
+    BOOL filzaEngineLoaded = XITForgeFilzaEngineLoaded();
+    [[NSUserDefaults standardUserDefaults]
+        setBool:filzaEngineLoaded
+         forKey:@"XITForgeFilzaEngineLoaded"];
 
     UIColor *acento =
         [UIColor colorWithRed:0.2
