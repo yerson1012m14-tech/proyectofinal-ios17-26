@@ -34,36 +34,21 @@ static NSString *containerPath(NSString *bid) {
     for (NSString *folder in folders) {
         if ([folder hasPrefix:@"."]) continue;
         
-        NSString *containerPath = [appsRoot stringByAppendingPathComponent:folder];
-        NSString *metadataPath = [containerPath stringByAppendingPathComponent:@"com.apple.mobile_container_manager.metadata.plist"];
+        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
+        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@"com.apple.mobile_container_manager.metadata.plist"];
         
         if ([fm fileExistsAtPath:metadataPath]) {
             NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
             NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
             
             if ([foundBundleId isEqualToString:bid]) {
-                NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, containerPath);
-                return containerPath;
+                NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, candidatePath);
+                return candidatePath;
             }
         }
     }
     
     NSLog(@"XITFORGE Explorer: No se encontró contenedor para %@", bid);
-    return nil;
-}
-                }
-                if ([proxy respondsToSelector:@selector(containerURL)]) {
-                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
-                    if (containerURL && containerURL.path) {
-                        NSLog(@"XITFORGE Explorer: Container de %@ = %@", bid, containerURL.path);
-                        return containerURL.path;
-                    }
-                }
-            } @catch (NSException *e) { continue; }
-        }
-    } @catch (NSException *e) {
-        NSLog(@"XITFORGE Explorer: Error al obtener contenedor de %@: %@", bid, e.reason);
-    }
     return nil;
 }
 
