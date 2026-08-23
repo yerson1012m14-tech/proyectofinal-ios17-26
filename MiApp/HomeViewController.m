@@ -704,7 +704,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     card.layer.shadowOffset = CGSizeMake(0.0, 12.0);
     UILabel *warningIcon = [[UILabel alloc] init];
     warningIcon.translatesAutoresizingMaskIntoConstraints = NO;
-    warningIcon.text = @"️";
+    warningIcon.text = @"⚠️";
     warningIcon.textAlignment = NSTextAlignmentCenter;
     warningIcon.font = [UIFont systemFontOfSize:38.0 weight:UIFontWeightRegular];
     UILabel *title = [[UILabel alloc] init];
@@ -1221,7 +1221,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
             if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
-            [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
+            [items addObject:@{"downloadURL": downloadURL, "destinationURL": destinationURL}];
         }
         [self restoreOriginalItems:items index:0];
     });
