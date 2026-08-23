@@ -14,7 +14,8 @@ static NSString *mcmVirtualRoot(void) {
     XITForgeLastContainerError = nil;
     asegurarMotor();
 
-    NSString *home = [[NSHomeDirectory() ?: @""] stringByStandardizingPath];
+    NSString *rawHome = NSHomeDirectory();
+    NSString *home = [rawHome stringByStandardizingPath];
     if (home.length == 0) {
         XITForgeLastContainerError = @"NSHomeDirectory() devolvió una ruta vacía.";
         return nil;
