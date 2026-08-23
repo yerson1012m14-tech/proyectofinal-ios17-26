@@ -196,25 +196,34 @@ static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorO
                 if (![appBundleId isEqualToString:bundleId]) continue;
                 if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
                     NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
-                    if (dataContainerURL && dataContainerURL.path) {
-                        NSLog(@"XITFORGE: DataContainer de %@ = %@", bundleId, dataContainerURL.path);
-                        return dataContainerURL.path;
+                    NSString *path = [dataContainerURL.path stringByStandardizingPath];
+
+                    if (path.length > 0 &&
+                        ![path isEqualToString:@"/var/mobile"] &&
+                        ![path isEqualToString:@"/var/mobile/Documents"]) {
+
+                        NSLog(@"XITFORGE: DataContainer de %@ = %@", bundleId, path);
+                        return path;
                     }
+
+                    NSLog(@"XITFORGE: DataContainer inválido para %@ = %@", bundleId, path ?: @"(nil)");
                 }
-                if ([proxy respondsToSelector:@selector(containerURL)]) {
-                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
-                    if (containerURL && containerURL.path) {
-                        NSLog(@"XITFORGE: Container de %@ = %@", bundleId, containerURL.path);
-                        return containerURL.path;
-                    }
-                }
+
+                /*
+                 * No usar containerURL como reemplazo de dataContainerURL:
+                 * puede devolver una raíz genérica como /var/mobile y romper
+                 * la ruta final al concatenar Documents/...
+                 */
             } @catch (NSException *e) { continue; }
         }
     } @catch (NSException *e) {
         if (errorOut) *errorOut = [NSString stringWithFormat:@"Error: %@", e.reason];
         return nil;
     }
-    if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
+    if (errorOut) {
+        *errorOut = [NSString stringWithFormat:
+            @"No se obtuvo un dataContainerURL válido para %@.", bundleId];
+    }
     return nil;
 }
 
