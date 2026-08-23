@@ -15,24 +15,42 @@ static NSString *mcmVirtualRoot(void) {
 }
 
 static NSString *containerPath(NSString *bid) {
-    @try {
-        Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
-        if (!wsClass || ![wsClass respondsToSelector:@selector(defaultWorkspace)]) return nil;
-        id workspace = [wsClass performSelector:@selector(defaultWorkspace)];
-        if (!workspace || ![workspace respondsToSelector:@selector(allApplications)]) return nil;
-        NSArray *allApps = [workspace performSelector:@selector(allApplications)];
-        if (!allApps) return nil;
-        for (id proxy in allApps) {
-            @try {
-                if (![proxy respondsToSelector:@selector(applicationIdentifier)]) continue;
-                NSString *appBundleId = [proxy performSelector:@selector(applicationIdentifier)];
-                if (![appBundleId isEqualToString:bid]) continue;
-                if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
-                    NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
-                    if (dataContainerURL && dataContainerURL.path) {
-                        NSLog(@"XITFORGE Explorer: DataContainer de %@ = %@", bid, dataContainerURL.path);
-                        return dataContainerURL.path;
-                    }
+    if (bid.length == 0) return nil;
+    asegurarMotor();
+    
+    // Si es la propia app XITFORGE, devolver su contenedor
+    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
+    if ([bid isEqualToString:currentBundleId]) {
+        return mcmVirtualRoot();
+    }
+    
+    // Para otras apps, buscar directamente en el filesystem
+    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
+    if (!folders) return nil;
+    
+    for (NSString *folder in folders) {
+        if ([folder hasPrefix:@"."]) continue;
+        
+        NSString *containerPath = [appsRoot stringByAppendingPathComponent:folder];
+        NSString *metadataPath = [containerPath stringByAppendingPathComponent:@"com.apple.mobile_container_manager.metadata.plist"];
+        
+        if ([fm fileExistsAtPath:metadataPath]) {
+            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
+            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
+            
+            if ([foundBundleId isEqualToString:bid]) {
+                NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, containerPath);
+                return containerPath;
+            }
+        }
+    }
+    
+    NSLog(@"XITFORGE Explorer: No se encontró contenedor para %@", bid);
+    return nil;
+}
                 }
                 if ([proxy respondsToSelector:@selector(containerURL)]) {
                     NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
