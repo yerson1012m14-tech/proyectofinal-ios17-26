@@ -375,32 +375,19 @@ static BOOL XITForgeFilesAreIdentical(
 #pragma mark - XITFORGE Filesystem Engine
 
 /*
- * FilzaSlop exporta TweakInit como constructor del dylib.
- * El loader ya lo ejecuta automáticamente.
+ * FilzaJailedDS no exporta la interfaz MCMFilza* que usaba FilzaSlop.
  *
- * NO llamar TweakInit manualmente:
- * volvería a instalar hooks ya instalados y puede provocar recursión/crash,
- * especialmente en LSApplicationWorkspace/allApplications al abrir Explorar.
+ * Esta adaptación elimina las llamadas antiguas a:
+ *   MCMFilzaStart
+ *   MCMFilzaDataContainerPath
+ *   MCMFilzaVirtualRoot
  *
- * Tampoco se activa MCMFilzaSetUnrestrictedFilesystem(1).
+ * Para evitar escribir fuera del sandbox de XITFORGE sin una API explícita
+ * y documentada del motor, este resolver solo devuelve el contenedor propio
+ * de la aplicación actual.
  */
 static void XITForgeEnsureEngine(void) {
-    static dispatch_once_t onceToken;
-
-    dispatch_once(&onceToken, ^{
-        void (*start)(void) =
-            (void (*)(void))dlsym(
-                RTLD_DEFAULT,
-                "MCMFilzaStart"
-            );
-
-        if (start) {
-            start();
-            NSLog(@"XITFORGE: MCMFilzaStart listo");
-        } else {
-            NSLog(@"XITFORGE: MCMFilzaStart no disponible");
-        }
-    });
+    /* Sin inicialización manual. El dylib, si está presente, maneja su constructor. */
 }
 
 static NSString *XITForgeDataContainerPath(
@@ -414,84 +401,32 @@ static NSString *XITForgeDataContainerPath(
         return nil;
     }
 
-    XITForgeEnsureEngine();
+    NSString *currentBundleId =
+        [NSBundle mainBundle].bundleIdentifier ?: @"";
 
-    NSString *(*dataPath)(NSString *, NSString **) =
-        (NSString *(*)(NSString *, NSString **))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaDataContainerPath"
-        );
-
-    NSString *directDetail = nil;
-    NSString *directPath = nil;
-
-    if (dataPath) {
-        directPath = dataPath(bundleId, &directDetail);
-    }
-
-    NSFileManager *fm = [NSFileManager defaultManager];
-
-    if ([directPath isKindOfClass:[NSString class]] && directPath.length > 0) {
-        NSString *standard = [directPath stringByStandardizingPath];
-        BOOL isDirectory = NO;
-        if ([fm fileExistsAtPath:standard isDirectory:&isDirectory] && isDirectory) {
-            return standard;
+    if (![bundleId isEqualToString:currentBundleId]) {
+        if (errorOut) {
+            *errorOut =
+                @"El motor actual no expone una API de contenedores compatible con XITFORGE para esta aplicación.";
         }
+        return nil;
     }
 
-    /*
-     * Respaldo seguro: FilzaSlop crea enlaces de los contenedores activados en
-     * Documents/Device Storage/[MHA-C2] App Data/<bundleId>.
-     * Si el lookup directo no devuelve una ruta utilizable, usamos ese enlace
-     * existente. No se crea ni se borra nada aquí.
-     */
-    NSString *(*virtualRoot)(void) =
-        (NSString *(*)(void))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaVirtualRoot"
-        );
+    NSString *home =
+        [NSHomeDirectory() stringByStandardizingPath];
 
-    if (virtualRoot) {
-        NSString *root = virtualRoot();
-        if ([root isKindOfClass:[NSString class]] && root.length > 0) {
-            NSString *linkPath =
-                [[[root stringByAppendingPathComponent:@"[MHA-C2] App Data"]
-                    stringByAppendingPathComponent:bundleId]
-                    stringByStandardizingPath];
-
-            BOOL isDirectory = NO;
-            if ([fm fileExistsAtPath:linkPath isDirectory:&isDirectory] && isDirectory) {
-                NSLog(
-                    @"XITFORGE: usando enlace MCM para %@ -> %@",
-                    bundleId,
-                    linkPath
-                );
-                return linkPath;
-            }
+    BOOL isDirectory = NO;
+    if (![[NSFileManager defaultManager]
+            fileExistsAtPath:home
+                 isDirectory:&isDirectory] ||
+        !isDirectory) {
+        if (errorOut) {
+            *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
         }
+        return nil;
     }
 
-    NSString *reason = nil;
-    if (!dataPath) {
-        reason = @"MCMFilzaDataContainerPath no está disponible";
-    } else if (directDetail.length > 0) {
-        reason = directDetail;
-    } else if (directPath.length > 0) {
-        reason = [NSString stringWithFormat:
-            @"el motor devolvió una ruta no accesible: %@",
-            directPath];
-    } else {
-        reason = @"el motor no devolvió una ruta para ese bundleId";
-    }
-
-    NSLog(
-        @"XITFORGE: contenedor no resuelto para %@: %@",
-        bundleId,
-        reason
-    );
-
-    if (errorOut) *errorOut = reason;
-    return nil;
+    return home;
 }
 
 static NSURL *XITForgeExistingDirectoryChild(
@@ -508,7 +443,6 @@ static NSURL *XITForgeExistingDirectoryChild(
 
     NSFileManager *fm = [NSFileManager defaultManager];
 
-    /* Primero intentar el nombre exacto. */
     NSURL *exact =
         [parent URLByAppendingPathComponent:requestedName
                                isDirectory:YES];
@@ -526,10 +460,6 @@ static NSURL *XITForgeExistingDirectoryChild(
         return nil;
     }
 
-    /*
-     * Si solo cambia el casing, usar el nombre REAL que existe en el disco.
-     * Esto evita rechazar contentcache/ContentCache, etc.
-     */
     NSError *listError = nil;
     NSArray<NSString *> *children =
         [fm contentsOfDirectoryAtPath:parent.path error:&listError];

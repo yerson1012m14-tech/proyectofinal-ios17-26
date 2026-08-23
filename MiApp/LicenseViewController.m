@@ -4,6 +4,8 @@
 #import "Translations.h"
 #import <QuartzCore/QuartzCore.h>
 #import <dlfcn.h>
+#import <mach-o/dyld.h>
+#include <string.h>
 
 @interface LicenseViewController () <UITextFieldDelegate>
 @property (nonatomic, strong) UITextField *licenseField;
@@ -17,79 +19,25 @@
 @end
 
 /*
- * Comprobación no destructiva de compatibilidad del motor.
+ * FilzaJailedDS no expone MCMFilzaStart/DataContainerPath/VirtualRoot.
+ * Por eso esta pantalla ya no afirma "COMPATIBLE".
  *
- * Solo se marca COMPATIBLE cuando:
- *  - están disponibles las funciones esenciales del motor;
- *  - MCMFilzaStart puede inicializarse;
- *  - el motor devuelve un VirtualRoot real, existente, directorio y legible.
- *
- * No se llama TweakInit.
- * No se habilita MCMFilzaSetUnrestrictedFilesystem.
- * No se crea, modifica ni elimina ningún archivo.
+ * Solo detecta de forma no destructiva si FilzaApplySandboxExt.dylib
+ * está cargado dentro del proceso.
  */
-static BOOL XITForgeEngineIsCompatible(void) {
+static BOOL XITForgeEngineIsLoaded(void) {
+    uint32_t count = _dyld_image_count();
 
-    void (*start)(void) =
-        (void (*)(void))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaStart"
-        );
+    for (uint32_t i = 0; i < count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name) continue;
 
-    NSString *(*dataPath)(NSString *, NSString **) =
-        (NSString *(*)(NSString *, NSString **))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaDataContainerPath"
-        );
-
-    NSString *(*virtualRoot)(void) =
-        (NSString *(*)(void))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaVirtualRoot"
-        );
-
-    if (!start || !dataPath || !virtualRoot) {
-        return NO;
+        if (strstr(name, "FilzaApplySandboxExt.dylib") != NULL) {
+            return YES;
+        }
     }
 
-    static dispatch_once_t onceToken;
-
-    dispatch_once(&onceToken, ^{
-        start();
-    });
-
-    NSString *root =
-        virtualRoot();
-
-    if (
-        ![root isKindOfClass:[NSString class]] ||
-        root.length == 0
-    ) {
-        return NO;
-    }
-
-    NSString *standardRoot =
-        [root stringByStandardizingPath];
-
-    NSFileManager *fm =
-        [NSFileManager defaultManager];
-
-    BOOL isDirectory =
-        NO;
-
-    if (
-        ![fm fileExistsAtPath:standardRoot
-                  isDirectory:&isDirectory] ||
-        !isDirectory
-    ) {
-        return NO;
-    }
-
-    if (![fm isReadableFileAtPath:standardRoot]) {
-        return NO;
-    }
-
-    return YES;
+    return NO;
 }
 
 @implementation LicenseViewController
@@ -485,7 +433,7 @@ static BOOL XITForgeEngineIsCompatible(void) {
 - (void)updateEngineCompatibilityStatus {
 
     BOOL compatible =
-        XITForgeEngineIsCompatible();
+        XITForgeEngineIsLoaded();
 
     UIColor *green =
         [UIColor colorWithRed:0.20
@@ -502,7 +450,7 @@ static BOOL XITForgeEngineIsCompatible(void) {
     if (compatible) {
 
         self.engineStatusLabel.text =
-            @"MOTOR · COMPATIBLE";
+            @"MOTOR · CARGADO";
 
         self.engineStatusLabel.textColor =
             green;
@@ -516,7 +464,7 @@ static BOOL XITForgeEngineIsCompatible(void) {
     } else {
 
         self.engineStatusLabel.text =
-            @"MOTOR · NO COMPATIBLE";
+            @"MOTOR · NO CARGADO";
 
         self.engineStatusLabel.textColor =
             red;

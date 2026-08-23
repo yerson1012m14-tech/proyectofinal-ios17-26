@@ -1,39 +1,29 @@
 #import "ViewController.h"
 #import <dlfcn.h>
 
+/*
+ * FilzaJailedDS no exporta las funciones MCMFilza* del motor anterior.
+ * El explorador queda limitado al sandbox propio de XITFORGE.
+ */
 static void asegurarMotor(void) {
-    static dispatch_once_t onceToken;
-
-    dispatch_once(&onceToken, ^{
-        /*
-         * TweakInit es constructor del dylib y ya fue ejecutado por el loader.
-         * No se llama manualmente para evitar reinstalar hooks.
-         */
-        void (*start)(void) =
-            (void (*)(void))dlsym(
-                RTLD_DEFAULT,
-                "MCMFilzaStart"
-            );
-
-        if (start) {
-            start();
-        }
-    });
+    /* No se llama ningún inicializador manual del dylib. */
 }
 
 static NSString *mcmVirtualRoot(void) {
     asegurarMotor();
 
-    NSString *(*virtualRoot)(void) =
-        (NSString *(*)(void))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaVirtualRoot"
-        );
+    NSString *home =
+        [NSHomeDirectory() stringByStandardizingPath];
 
-    NSString *root = virtualRoot ? virtualRoot() : nil;
-    return ([root isKindOfClass:[NSString class]] && root.length > 0)
-        ? [root stringByStandardizingPath]
-        : nil;
+    BOOL isDirectory = NO;
+    if ([[NSFileManager defaultManager]
+            fileExistsAtPath:home
+                 isDirectory:&isDirectory] &&
+        isDirectory) {
+        return home;
+    }
+
+    return nil;
 }
 
 static NSString *containerPath(NSString *bid) {
@@ -41,43 +31,18 @@ static NSString *containerPath(NSString *bid) {
 
     asegurarMotor();
 
-    NSString *(*dataPath)(NSString *, NSString **) =
-        (NSString *(*)(NSString *, NSString **))dlsym(
-            RTLD_DEFAULT,
-            "MCMFilzaDataContainerPath"
+    NSString *currentBundleId =
+        [NSBundle mainBundle].bundleIdentifier ?: @"";
+
+    if (![bid isEqualToString:currentBundleId]) {
+        NSLog(
+            @"XITFORGE Explorer: %@ fuera del sandbox propio; acceso no disponible",
+            bid
         );
-
-    NSString *detail = nil;
-    NSString *path = dataPath ? dataPath(bid, &detail) : nil;
-    NSFileManager *fm = [NSFileManager defaultManager];
-
-    if ([path isKindOfClass:[NSString class]] && path.length > 0) {
-        NSString *standard = [path stringByStandardizingPath];
-        BOOL isDirectory = NO;
-        if ([fm fileExistsAtPath:standard isDirectory:&isDirectory] && isDirectory) {
-            return standard;
-        }
+        return nil;
     }
 
-    NSString *root = mcmVirtualRoot();
-    if (root.length > 0) {
-        NSString *fallback =
-            [[root stringByAppendingPathComponent:@"[MHA-C2] App Data"]
-                stringByAppendingPathComponent:bid];
-
-        BOOL isDirectory = NO;
-        if ([fm fileExistsAtPath:fallback isDirectory:&isDirectory] && isDirectory) {
-            return fallback;
-        }
-    }
-
-    NSLog(
-        @"XITFORGE Explorer: contenedor no resuelto %@ detail=%@",
-        bid,
-        detail ?: @"sin detalle"
-    );
-
-    return nil;
+    return mcmVirtualRoot();
 }
 
 static NSString *fmtSize(unsigned long long b) {
