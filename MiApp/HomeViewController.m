@@ -17,12 +17,21 @@ static UIColor *XITForgeAccentDarkColor(void) {
 }
 
 #pragma mark - XITFORGE Exact File Writer
-static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSError **errorOut) {
+static BOOL XITForgeWriteExactFile(
+    NSURL *sourceURL,
+    NSURL *destinationURL,
+    NSError **errorOut
+) {
     NSString *sourcePath = sourceURL.path;
     NSString *destinationPath = destinationURL.path;
     if (sourcePath.length == 0 || destinationPath.length == 0) {
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
+            *errorOut = [NSError errorWithDomain:@"XITFORGE"
+                                            code:2001
+                                        userInfo:@{
+                NSLocalizedDescriptionKey:
+                    @"Ruta de origen o destino vacía."
+            }];
         }
         return NO;
     }
@@ -32,26 +41,43 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
     if (lstat(dst, &dstInfo) == 0) {
         if (S_ISDIR(dstInfo.st_mode)) {
             if (errorOut) {
-                *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2002 userInfo:@{NSLocalizedDescriptionKey: @"El destino es una carpeta; no se modificó."}];
+                *errorOut = [NSError errorWithDomain:@"XITFORGE"
+                                                code:2002
+                                            userInfo:@{
+                    NSLocalizedDescriptionKey:
+                        @"El destino es una carpeta; no se modificó."
+                }];
             }
             return NO;
         }
         if (S_ISLNK(dstInfo.st_mode)) {
             if (errorOut) {
-                *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2003 userInfo:@{NSLocalizedDescriptionKey: @"El destino es un enlace simbólico; no se modificó."}];
+                *errorOut = [NSError errorWithDomain:@"XITFORGE"
+                                                code:2003
+                                            userInfo:@{
+                    NSLocalizedDescriptionKey:
+                        @"El destino es un enlace simbólico; no se modificó."
+                }];
             }
             return NO;
         }
         if (!S_ISREG(dstInfo.st_mode)) {
             if (errorOut) {
-                *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2004 userInfo:@{NSLocalizedDescriptionKey: @"El destino existente no es un archivo normal."}];
+                *errorOut = [NSError errorWithDomain:@"XITFORGE"
+                                                code:2004
+                                            userInfo:@{
+                    NSLocalizedDescriptionKey:
+                        @"El destino existente no es un archivo normal."
+                }];
             }
             return NO;
         }
     } else if (errno != ENOENT) {
         int e = errno;
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:e
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -59,7 +85,9 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
     if (inFD < 0) {
         int e = errno;
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:e
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -72,7 +100,9 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
         int e = errno;
         close(inFD);
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:e
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -117,7 +147,9 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
     close(inFD);
     if (!ok) {
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:savedErrno userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:savedErrno
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -125,14 +157,20 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
 }
 
 #pragma mark - XITFORGE Exact File Verification
-static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, NSError **errorOut) {
+static BOOL XITForgeFilesAreIdentical(
+    NSURL *sourceURL,
+    NSURL *destinationURL,
+    NSError **errorOut
+) {
     const char *src = sourceURL.path.fileSystemRepresentation;
     const char *dst = destinationURL.path.fileSystemRepresentation;
     int inFD = open(src, O_RDONLY | O_CLOEXEC);
     if (inFD < 0) {
         int e = errno;
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:e
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -141,7 +179,9 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
         int e = errno;
         close(inFD);
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:e
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -152,7 +192,9 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
         close(inFD);
         close(outFD);
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:e
+                                        userInfo:nil];
         }
         return NO;
     }
@@ -160,7 +202,12 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
         close(inFD);
         close(outFD);
         if (errorOut) {
-            *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2101 userInfo:@{NSLocalizedDescriptionKey: @"El archivo escrito no coincide en tamaño con la descarga."}];
+            *errorOut = [NSError errorWithDomain:@"XITFORGE"
+                                            code:2101
+                                        userInfo:@{
+                NSLocalizedDescriptionKey:
+                    @"El archivo escrito no coincide en tamaño con la descarga."
+            }];
         }
         return NO;
     }
@@ -203,9 +250,16 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
     close(outFD);
     if (!identical && errorOut) {
         if (savedErrno != 0) {
-            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:savedErrno userInfo:nil];
+            *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                            code:savedErrno
+                                        userInfo:nil];
         } else {
-            *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2102 userInfo:@{NSLocalizedDescriptionKey: @"El contenido escrito no coincide con la descarga."}];
+            *errorOut = [NSError errorWithDomain:@"XITFORGE"
+                                            code:2102
+                                        userInfo:@{
+                NSLocalizedDescriptionKey:
+                    @"El contenido escrito no coincide con la descarga."
+            }];
         }
     }
     return identical;
@@ -215,23 +269,24 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
 static void XITForgeEnsureEngine(void) {
 }
 
-static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorOut) {
+// ✅ CORREGIDO: Ahora puede obtener la ruta de contenedores de OTRAS apps
+static NSString *XITForgeDataContainerPath(
+    NSString *bundleId,
+    NSString **errorOut
+) {
     if (errorOut) *errorOut = nil;
     if (bundleId.length == 0) {
         if (errorOut) *errorOut = @"bundleId vacío";
         return nil;
     }
     
+    // Si es la propia app XITFORGE, devolver su contenedor
     NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
-    
-    // Si es la propia app, devolver el contenedor propio
     if ([bundleId isEqualToString:currentBundleId]) {
         NSString *home = [NSHomeDirectory() stringByStandardizingPath];
         BOOL isDirectory = NO;
         if (![[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] || !isDirectory) {
-            if (errorOut) {
-                *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
-            }
+            if (errorOut) *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
             return nil;
         }
         return home;
@@ -263,7 +318,7 @@ static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorO
                 NSString *appBundleId = [proxy performSelector:@selector(applicationIdentifier)];
                 if (![appBundleId isEqualToString:bundleId]) continue;
                 
-                // Intentar obtener containerURL
+                // Intentar containerURL
                 if ([proxy respondsToSelector:@selector(containerURL)]) {
                     NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
                     if (containerURL && containerURL.path) {
@@ -272,7 +327,7 @@ static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorO
                     }
                 }
                 
-                // Fallback: intentar dataContainerURL
+                // Fallback: dataContainerURL
                 if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
                     NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
                     if (dataContainerURL && dataContainerURL.path) {
@@ -293,7 +348,11 @@ static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorO
     return nil;
 }
 
-static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedName, NSString **errorOut) {
+static NSURL *XITForgeExistingDirectoryChild(
+    NSURL *parent,
+    NSString *requestedName,
+    NSString **errorOut
+) {
     if (errorOut) *errorOut = nil;
     if (!parent || requestedName.length == 0) {
         if (errorOut) *errorOut = @"componente de ruta vacío";
@@ -307,7 +366,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             return exact;
         }
         if (errorOut) {
-            *errorOut = [NSString stringWithFormat:@"%@ existe pero no es una carpeta normal", exact.path];
+            *errorOut = [NSString stringWithFormat:
+                @"%@ existe pero no es una carpeta normal",
+                exact.path];
         }
         return nil;
     }
@@ -315,7 +376,10 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSArray<NSString *> *children = [fm contentsOfDirectoryAtPath:parent.path error:&listError];
     if (!children) {
         if (errorOut) {
-            *errorOut = [NSString stringWithFormat:@"no se pudo leer %@: %@", parent.path, listError.localizedDescription ?: @"error desconocido"];
+            *errorOut = [NSString stringWithFormat:
+                @"no se pudo leer %@: %@",
+                parent.path,
+                listError.localizedDescription ?: @"error desconocido"];
         }
         return nil;
     }
@@ -328,7 +392,10 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     }
     if (!actualName) {
         if (errorOut) {
-            *errorOut = [NSString stringWithFormat:@"no existe la carpeta '%@' dentro de %@", requestedName, parent.path];
+            *errorOut = [NSString stringWithFormat:
+                @"no existe la carpeta '%@' dentro de %@",
+                requestedName,
+                parent.path];
         }
         return nil;
     }
@@ -336,7 +403,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     memset(&info, 0, sizeof(info));
     if (lstat(resolved.path.fileSystemRepresentation, &info) != 0 || !S_ISDIR(info.st_mode) || S_ISLNK(info.st_mode)) {
         if (errorOut) {
-            *errorOut = [NSString stringWithFormat:@"%@ no es una carpeta válida", resolved.path];
+            *errorOut = [NSString stringWithFormat:
+                @"%@ no es una carpeta válida",
+                resolved.path];
         }
         return nil;
     }
@@ -371,9 +440,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 @implementation XITForgeOptionCell
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
-    if (!self) {
-        return nil;
-    }
+    if (!self) return nil;
     self.backgroundColor = [UIColor clearColor];
     self.selectionStyle = UITableViewCellSelectionStyleNone;
     self.contentView.backgroundColor = [UIColor clearColor];
@@ -522,21 +589,15 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 - (BOOL)isOptionActivated:(XITForgeOption *)option {
-    if (!option) {
-        return NO;
-    }
+    if (!option) return NO;
     NSString *key = [self activationKeyForOption:option];
     return key.length > 0 && [self.activeOptionKeys containsObject:key];
 }
 
 - (void)markOptionActivated:(XITForgeOption *)option {
-    if (!option) {
-        return;
-    }
+    if (!option) return;
     NSString *key = [self activationKeyForOption:option];
-    if (key.length == 0) {
-        return;
-    }
+    if (key.length == 0) return;
     [self.activeOptionKeys addObject:key];
     [self persistActiveOptions];
 }
@@ -582,13 +643,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 - (XITForgeOption *)optionAtIndexPath:(NSIndexPath *)indexPath forCategory:(NSString *)category {
-    if (!indexPath || indexPath.section != 0) {
-        return nil;
-    }
+    if (!indexPath || indexPath.section != 0) return nil;
     NSArray<XITForgeOption *> *items = [self optionsForCategory:category];
-    if (indexPath.row < 0 || indexPath.row >= items.count) {
-        return nil;
-    }
+    if (indexPath.row < 0 || indexPath.row >= items.count) return nil;
     return items[indexPath.row];
 }
 
@@ -601,15 +658,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     XITForgeOption *aimbot = [self optionAtIndexPath:self.selectedAimbotIndexPath forCategory:@"aimbot"];
     XITForgeOption *hologram = [self optionAtIndexPath:self.selectedHologramIndexPath forCategory:@"holograma"];
     XITForgeOption *fps = [self optionAtIndexPath:self.selectedFPSIndexPath forCategory:@"fps"];
-    if (aimbot) {
-        [selected addObject:aimbot];
-    }
-    if (hologram) {
-        [selected addObject:hologram];
-    }
-    if (fps) {
-        [selected addObject:fps];
-    }
+    if (aimbot) [selected addObject:aimbot];
+    if (hologram) [selected addObject:hologram];
+    if (fps) [selected addObject:fps];
     return [selected copy];
 }
 
@@ -647,9 +698,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     } else if ([lower isEqualToString:@"fps"]) {
         normalized = @"fps";
     }
-    if ([self.selectedCategory isEqualToString:normalized]) {
-        return;
-    }
+    if ([self.selectedCategory isEqualToString:normalized]) return;
     self.selectedCategory = normalized;
     if ([normalized isEqualToString:@"aimbot"]) {
         self.selectedOptionIndexPath = self.selectedAimbotIndexPath;
@@ -672,29 +721,17 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [feedback selectionChanged];
 }
 
-- (void)hologramTabTapped {
-    [self switchToCategory:@"holograma"];
-}
-
-- (void)aimbotTabTapped {
-    [self switchToCategory:@"aimbot"];
-}
-
-- (void)fpsTabTapped {
-    [self switchToCategory:@"fps"];
-}
+- (void)hologramTabTapped { [self switchToCategory:@"holograma"]; }
+- (void)aimbotTabTapped { [self switchToCategory:@"aimbot"]; }
+- (void)fpsTabTapped { [self switchToCategory:@"fps"]; }
 
 - (void)updateActivateButtonForCurrentSelection {
-    if (!self.activateButton) {
-        return;
-    }
+    if (!self.activateButton) return;
     NSArray<XITForgeOption *> *selected = [self selectedOptions];
     BOOL hasSelection = selected.count > 0;
     NSInteger pendingCount = 0;
     for (XITForgeOption *option in selected) {
-        if (![self isOptionActivated:option]) {
-            pendingCount++;
-        }
+        if (![self isOptionActivated:option]) pendingCount++;
     }
     BOOL allSelectedAlreadyActive = hasSelection && pendingCount == 0;
     UIColor *accent = XITForgeAccentColor();
@@ -729,18 +766,12 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 - (void)playActivationAudio {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     id savedPreference = [defaults objectForKey:@"xitforgeActivationVoiceEnabled"];
-    if (savedPreference != nil && ![defaults boolForKey:@"xitforgeActivationVoiceEnabled"]) {
-        return;
-    }
+    if (savedPreference != nil && ![defaults boolForKey:@"xitforgeActivationVoiceEnabled"]) return;
     NSURL *soundURL = [[NSBundle mainBundle] URLForResource:@"xitforge_activar" withExtension:@"m4a"];
-    if (!soundURL) {
-        return;
-    }
+    if (!soundURL) return;
     NSError *audioError = nil;
     self.activationAudioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:soundURL error:&audioError];
-    if (!self.activationAudioPlayer || audioError) {
-        return;
-    }
+    if (!self.activationAudioPlayer || audioError) return;
     self.activationAudioPlayer.volume = 1.0;
     [self.activationAudioPlayer prepareToPlay];
     [self.activationAudioPlayer play];
@@ -748,9 +779,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 - (void)showActivationBannerForOptions:(NSArray<XITForgeOption *> *)options {
     UIView *host = self.navigationController.view ?: self.view;
-    if (!host) {
-        return;
-    }
+    if (!host) return;
     UIView *banner = [[UIView alloc] init];
     banner.translatesAutoresizingMaskIntoConstraints = NO;
     banner.backgroundColor = [UIColor colorWithWhite:0.055 alpha:0.98];
@@ -774,9 +803,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     detail.translatesAutoresizingMaskIntoConstraints = NO;
     NSMutableArray<NSString *> *names = [NSMutableArray array];
     for (XITForgeOption *option in options) {
-        if (option.name.length > 0) {
-            [names addObject:option.name];
-        }
+        if (option.name.length > 0) [names addObject:option.name];
     }
     detail.text = names.count > 0 ? [names componentsJoinedByString:@" + "] : @"XITFORGE";
     detail.textColor = [UIColor colorWithWhite:0.70 alpha:1.0];
@@ -820,28 +847,20 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 - (void)dismissAimbotWarning {
     UIView *overlay = self.aimbotWarningOverlay;
-    if (!overlay) {
-        return;
-    }
+    if (!overlay) return;
     UIView *card = [overlay viewWithTag:9917];
     [UIView animateWithDuration:0.20 animations:^{
         overlay.alpha = 0.0;
-        if (card) {
-            card.transform = CGAffineTransformMakeScale(0.97, 0.97);
-        }
+        if (card) card.transform = CGAffineTransformMakeScale(0.97, 0.97);
     } completion:^(BOOL finished) {
         [overlay removeFromSuperview];
-        if (self.aimbotWarningOverlay == overlay) {
-            self.aimbotWarningOverlay = nil;
-        }
+        if (self.aimbotWarningOverlay == overlay) self.aimbotWarningOverlay = nil;
     }];
 }
 
 - (void)showAimbotWarning {
     UIView *host = self.navigationController.view ?: self.view;
-    if (!host) {
-        return;
-    }
+    if (!host) return;
     if (self.aimbotWarningOverlay) {
         [self.aimbotWarningOverlay removeFromSuperview];
         self.aimbotWarningOverlay = nil;
@@ -1100,20 +1119,14 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 - (NSURL *)absoluteServerURLForString:(NSString *)value {
     NSString *trimmed = [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (trimmed.length == 0) {
-        return nil;
-    }
+    if (trimmed.length == 0) return nil;
     NSURL *direct = [NSURL URLWithString:trimmed];
     if (direct.scheme.length > 0) {
         NSString *host = direct.host.lowercaseString;
         BOOL localHost = [host isEqualToString:@"localhost"] || [host isEqualToString:@"127.0.0.1"] || [host isEqualToString:@"0.0.0.0"];
-        if (!localHost) {
-            return direct;
-        }
+        if (!localHost) return direct;
         NSString *relative = direct.path.length > 0 ? direct.path : @"/";
-        if (direct.query.length > 0) {
-            relative = [relative stringByAppendingFormat:@"?%@", direct.query];
-        }
+        if (direct.query.length > 0) relative = [relative stringByAppendingFormat:@"?%@", direct.query];
         trimmed = relative;
     }
     NSString *base = [self apiBaseURL];
@@ -1139,7 +1152,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.activityIndicator stopAnimating];
             if (error) {
-                NSLog(@"XITFORGE options error: %@", error);
                 [self showError:@"No se pudieron cargar las opciones."];
                 return;
             }
@@ -1150,7 +1162,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSError *jsonError = nil;
             id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
             if (jsonError || ![json isKindOfClass:[NSDictionary class]]) {
-                NSLog(@"XITFORGE invalid JSON: %@", jsonError);
                 [self showError:@"La respuesta del servidor no es válida."];
                 return;
             }
@@ -1168,56 +1179,29 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             }
             NSMutableArray *parsed = [NSMutableArray array];
             for (id rawItem in rawOptions) {
-                if (![rawItem isKindOfClass:[NSDictionary class]]) {
-                    continue;
-                }
+                if (![rawItem isKindOfClass:[NSDictionary class]]) continue;
                 NSDictionary *raw = (NSDictionary *)rawItem;
                 XITForgeOption *option = [[XITForgeOption alloc] init];
-                if ([raw[@"id"] isKindOfClass:[NSNumber class]]) {
-                    option.optionId = raw[@"id"];
-                }
-                if ([raw[@"name"] isKindOfClass:[NSString class]]) {
-                    option.name = raw[@"name"];
-                }
-                if ([raw[@"description"] isKindOfClass:[NSString class]]) {
-                    option.optionDescription = raw[@"description"];
-                }
-                if ([raw[@"game"] isKindOfClass:[NSString class]]) {
-                    option.game = raw[@"game"];
-                }
+                if ([raw[@"id"] isKindOfClass:[NSNumber class]]) option.optionId = raw[@"id"];
+                if ([raw[@"name"] isKindOfClass:[NSString class]]) option.name = raw[@"name"];
+                if ([raw[@"description"] isKindOfClass:[NSString class]]) option.optionDescription = raw[@"description"];
+                if ([raw[@"game"] isKindOfClass:[NSString class]]) option.game = raw[@"game"];
                 if ([raw[@"category"] isKindOfClass:[NSString class]]) {
                     option.category = [raw[@"category"] lowercaseString];
                 } else {
                     NSString *lowerName = option.name.lowercaseString ?: @"";
-                    if ([lowerName containsString:@"aimbot"]) {
-                        option.category = @"aimbot";
-                    } else if ([lowerName containsString:@"fps"]) {
-                        option.category = @"fps";
-                    } else {
-                        option.category = @"holograma";
-                    }
+                    if ([lowerName containsString:@"aimbot"]) option.category = @"aimbot";
+                    else if ([lowerName containsString:@"fps"]) option.category = @"fps";
+                    else option.category = @"holograma";
                 }
-                if ([raw[@"bundleId"] isKindOfClass:[NSString class]]) {
-                    option.bundleId = raw[@"bundleId"];
-                } else if ([dictionary[@"bundleId"] isKindOfClass:[NSString class]]) {
-                    option.bundleId = dictionary[@"bundleId"];
-                } else {
-                    option.bundleId = self.bundleId;
-                }
-                if ([raw[@"route"] isKindOfClass:[NSString class]]) {
-                    option.route = raw[@"route"];
-                }
-                if ([raw[@"fileName"] isKindOfClass:[NSString class]]) {
-                    option.fileName = raw[@"fileName"];
-                } else if ([raw[@"file"] isKindOfClass:[NSString class]]) {
-                    option.fileName = raw[@"file"];
-                }
-                if ([raw[@"fileUrl"] isKindOfClass:[NSString class]]) {
-                    option.fileUrl = raw[@"fileUrl"];
-                }
-                if ([raw[@"originalFileUrl"] isKindOfClass:[NSString class]]) {
-                    option.originalFileUrl = raw[@"originalFileUrl"];
-                }
+                if ([raw[@"bundleId"] isKindOfClass:[NSString class]]) option.bundleId = raw[@"bundleId"];
+                else if ([dictionary[@"bundleId"] isKindOfClass:[NSString class]]) option.bundleId = dictionary[@"bundleId"];
+                else option.bundleId = self.bundleId;
+                if ([raw[@"route"] isKindOfClass:[NSString class]]) option.route = raw[@"route"];
+                if ([raw[@"fileName"] isKindOfClass:[NSString class]]) option.fileName = raw[@"fileName"];
+                else if ([raw[@"file"] isKindOfClass:[NSString class]]) option.fileName = raw[@"file"];
+                if ([raw[@"fileUrl"] isKindOfClass:[NSString class]]) option.fileUrl = raw[@"fileUrl"];
+                if ([raw[@"originalFileUrl"] isKindOfClass:[NSString class]]) option.originalFileUrl = raw[@"originalFileUrl"];
                 [parsed addObject:option];
             }
             self.options = [parsed copy];
@@ -1249,7 +1233,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [task resume];
 }
 
-#pragma mark - Error
 - (void)showError:(NSString *)message {
     [self.activityIndicator stopAnimating];
     self.statusLabel.text = message;
@@ -1258,24 +1241,15 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 #pragma mark - TableView
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 1;
-}
-
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return [self optionsForSection:0].count;
-}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 1; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self optionsForSection:0].count; }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *identifier = @"XITForgeProfessionalOptionCell";
     XITForgeOptionCell *cell = (XITForgeOptionCell *)[tableView dequeueReusableCellWithIdentifier:identifier];
-    if (!cell) {
-        cell = [[XITForgeOptionCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:identifier];
-    }
+    if (!cell) cell = [[XITForgeOptionCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:identifier];
     XITForgeOption *option = [self optionAtIndexPath:indexPath];
-    if (!option) {
-        return cell;
-    }
+    if (!option) return cell;
     BOOL selected = self.selectedOptionIndexPath && [self.selectedOptionIndexPath isEqual:indexPath];
     cell.nameLabel.text = option.name ?: @"Opción";
     cell.descriptionLabel.text = option.optionDescription ?: @"";
@@ -1284,35 +1258,22 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     return cell;
 }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return 94.0;
-}
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath { return 94.0; }
 
-#pragma mark - Option Selection
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (![self optionAtIndexPath:indexPath]) {
-        return;
-    }
+    if (![self optionAtIndexPath:indexPath]) return;
     NSIndexPath *previous = self.selectedOptionIndexPath;
     BOOL tappedSelectedOption = previous && [previous isEqual:indexPath];
     if (tappedSelectedOption) {
         self.selectedOptionIndexPath = nil;
-        if ([self.selectedCategory isEqualToString:@"aimbot"]) {
-            self.selectedAimbotIndexPath = nil;
-        } else if ([self.selectedCategory isEqualToString:@"fps"]) {
-            self.selectedFPSIndexPath = nil;
-        } else {
-            self.selectedHologramIndexPath = nil;
-        }
+        if ([self.selectedCategory isEqualToString:@"aimbot"]) self.selectedAimbotIndexPath = nil;
+        else if ([self.selectedCategory isEqualToString:@"fps"]) self.selectedFPSIndexPath = nil;
+        else self.selectedHologramIndexPath = nil;
     } else {
         self.selectedOptionIndexPath = indexPath;
-        if ([self.selectedCategory isEqualToString:@"aimbot"]) {
-            self.selectedAimbotIndexPath = indexPath;
-        } else if ([self.selectedCategory isEqualToString:@"fps"]) {
-            self.selectedFPSIndexPath = indexPath;
-        } else {
-            self.selectedHologramIndexPath = indexPath;
-        }
+        if ([self.selectedCategory isEqualToString:@"aimbot"]) self.selectedAimbotIndexPath = indexPath;
+        else if ([self.selectedCategory isEqualToString:@"fps"]) self.selectedFPSIndexPath = indexPath;
+        else self.selectedHologramIndexPath = indexPath;
     }
     if (!self.activationInProgress) {
         self.selectionHintLabel.text = [self selectionHintText];
@@ -1326,9 +1287,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 - (void)beginActivationUI {
-    if (self.activationInProgress || self.deactivationInProgress) {
-        return;
-    }
+    if (self.activationInProgress || self.deactivationInProgress) return;
     self.activationInProgress = YES;
     self.tableView.userInteractionEnabled = NO;
     self.activateButton.enabled = NO;
@@ -1365,9 +1324,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
                 break;
             }
         }
-        if (activatedAimbot) {
-            [self showAimbotWarning];
-        }
+        if (activatedAimbot) [self showAimbotWarning];
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
     } else {
@@ -1394,15 +1351,11 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 - (void)activateSelectedOption {
-    if (self.activationInProgress || self.deactivationInProgress) {
-        return;
-    }
+    if (self.activationInProgress || self.deactivationInProgress) return;
     NSArray<XITForgeOption *> *selected = [self selectedOptions];
     NSMutableArray<XITForgeOption *> *pending = [NSMutableArray arrayWithCapacity:selected.count];
     for (XITForgeOption *option in selected) {
-        if (![self isOptionActivated:option]) {
-            [pending addObject:option];
-        }
+        if (![self isOptionActivated:option]) [pending addObject:option];
     }
     if (pending.count == 0) {
         [self updateActivateButtonForCurrentSelection];
@@ -1418,9 +1371,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 #pragma mark - Deactivate From Server
 - (void)beginDeactivationUI {
-    if (self.activationInProgress || self.deactivationInProgress) {
-        return;
-    }
+    if (self.activationInProgress || self.deactivationInProgress) return;
     self.deactivationInProgress = YES;
     self.tableView.userInteractionEnabled = NO;
     self.activateButton.enabled = NO;
@@ -1471,7 +1422,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSMutableArray *items = [NSMutableArray array];
         for (id rawItem in rawOriginals) {
             if (![rawItem isKindOfClass:[NSDictionary class]]) {
-                NSLog(@"XITFORGE original manifest: item inválido");
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
                 return;
             }
@@ -1488,7 +1438,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
                 }
             }
             if (option.route.length == 0 || option.fileName.length == 0 || option.originalFileUrl.length == 0) {
-                NSLog(@"XITFORGE original manifest incompleto: id=%@ route=%@ file=%@ url=%@ legacy=%d", raw[@"id"], option.route, option.fileName, option.originalFileUrl, legacy);
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
                 return;
             }
@@ -1496,7 +1445,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
             if (!destinationURL || !downloadURL) {
-                NSLog(@"XITFORGE original resolve error: %@ | route=%@ file=%@ url=%@", resolveError, option.route, option.fileName, option.originalFileUrl);
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
                 return;
             }
@@ -1520,7 +1468,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
         if (error || !data || (http && (http.statusCode < 200 || http.statusCode > 299))) {
-            NSLog(@"XITFORGE legacy originals fallback failed: %@ HTTP=%ld", error, (long)http.statusCode);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
             });
@@ -1529,7 +1476,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSError *jsonError = nil;
         id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
         if (jsonError || ![json isKindOfClass:[NSDictionary class]]) {
-            NSLog(@"XITFORGE legacy originals JSON error: %@", jsonError);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
             });
@@ -1539,7 +1485,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSNumber *ok = dictionary[@"ok"];
         NSArray *rawOptions = dictionary[@"options"];
         if (![ok isKindOfClass:[NSNumber class]] || !ok.boolValue || ![rawOptions isKindOfClass:[NSArray class]]) {
-            NSLog(@"XITFORGE legacy originals response inválida: %@", dictionary[@"error"]);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
             });
@@ -1551,9 +1496,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSDictionary *raw = (NSDictionary *)item;
             NSString *originalURL = [raw[@"originalFileUrl"] isKindOfClass:[NSString class]] ? raw[@"originalFileUrl"] : nil;
             BOOL hasOriginal = [raw[@"hasOriginalFile"] isKindOfClass:[NSNumber class]] ? [raw[@"hasOriginalFile"] boolValue] : (originalURL.length > 0);
-            if (!hasOriginal && originalURL.length == 0) {
-                continue;
-            }
+            if (!hasOriginal && originalURL.length == 0) continue;
             [legacyOriginals addObject:raw];
         }
         [self processOriginalManifestDictionary:dictionary originals:legacyOriginals legacy:YES];
@@ -1562,9 +1505,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 - (void)deactivateAllOptions {
-    if (self.activationInProgress || self.deactivationInProgress) {
-        return;
-    }
+    if (self.activationInProgress || self.deactivationInProgress) return;
     [self beginDeactivationUI];
     NSString *encodedGame = [self.game stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
     NSString *urlString = [NSString stringWithFormat:@"%@/api/app/originals?game=%@", [self apiBaseURL], encodedGame ?: @""];
@@ -1579,14 +1520,12 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
         if (error || !data || (http && (http.statusCode < 200 || http.statusCode > 299))) {
-            NSLog(@"XITFORGE originals list failed: %@ HTTP=%ld; intentando API anterior", error, (long)http.statusCode);
             [self deactivateUsingLegacyOptionsFallback];
             return;
         }
         NSError *jsonError = nil;
         id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
         if (jsonError || ![json isKindOfClass:[NSDictionary class]]) {
-            NSLog(@"XITFORGE originals JSON inválido: %@; intentando API anterior", jsonError);
             [self deactivateUsingLegacyOptionsFallback];
             return;
         }
@@ -1594,7 +1533,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSNumber *ok = dictionary[@"ok"];
         NSArray *rawOriginals = dictionary[@"originals"];
         if (![ok isKindOfClass:[NSNumber class]] || !ok.boolValue || ![rawOriginals isKindOfClass:[NSArray class]]) {
-            NSLog(@"XITFORGE originals response inválida: %@; intentando API anterior", dictionary[@"error"]);
             [self deactivateUsingLegacyOptionsFallback];
             return;
         }
@@ -1619,7 +1557,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
         BOOL httpOK = !http || (http.statusCode >= 200 && http.statusCode <= 299);
         if (error || !location || !httpOK) {
-            NSLog(@"XITFORGE original download failed: %@ HTTP=%ld", error, (long)http.statusCode);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
             });
@@ -1628,7 +1565,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSError *writeError = nil;
         BOOL written = XITForgeWriteExactFile(location, destinationURL, &writeError);
         if (!written) {
-            NSLog(@"XITFORGE original write failed: %@ destination=%@", writeError, destinationURL.path);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
             });
@@ -1637,13 +1573,11 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSError *verifyError = nil;
         BOOL verified = XITForgeFilesAreIdentical(location, destinationURL, &verifyError);
         if (!verified) {
-            NSLog(@"XITFORGE original verify failed: %@ destination=%@", verifyError, destinationURL.path);
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
             });
             return;
         }
-        NSLog(@"XITFORGE ORIGINAL RESTORED destination=%@", destinationURL.path);
         dispatch_async(dispatch_get_main_queue(), ^{
             [self restoreOriginalItems:items index:(index + 1)];
         });
@@ -1653,29 +1587,17 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 #pragma mark - File Application
 - (NSString *)safePathComponent:(NSString *)value {
-    if (value.length == 0) {
-        return nil;
-    }
-    if ([value isEqualToString:@"."] || [value isEqualToString:@".."] || [value containsString:@"/"] || [value containsString:@"\\"] || [value containsString:@"\0"]) {
-        return nil;
-    }
+    if (value.length == 0) return nil;
+    if ([value isEqualToString:@"."] || [value isEqualToString:@".."] || [value containsString:@"/"] || [value containsString:@"\\"] || [value containsString:@"\0"]) return nil;
     return value;
 }
 
 - (NSString *)normalizedRouteComponent:(NSString *)component index:(NSUInteger)index {
-    if (index != 0) {
-        return component;
-    }
+    if (index != 0) return component;
     NSString *lower = component.lowercaseString;
-    if ([lower isEqualToString:@"documents"]) {
-        return @"Documents";
-    }
-    if ([lower isEqualToString:@"library"]) {
-        return @"Library";
-    }
-    if ([lower isEqualToString:@"tmp"]) {
-        return @"tmp";
-    }
+    if ([lower isEqualToString:@"documents"]) return @"Documents";
+    if ([lower isEqualToString:@"library"]) return @"Library";
+    if ([lower isEqualToString:@"tmp"]) return @"tmp";
     return component;
 }
 
@@ -1685,9 +1607,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSString *containerError = nil;
     NSString *container = XITForgeDataContainerPath(bundleId, &containerError);
     if (container.length == 0) {
-        if (errorOut) {
-            *errorOut = [NSString stringWithFormat:@"No se pudo abrir el contenedor de %@. %@", bundleId ?: @"(sin bundleId)", containerError ?: @"Sin detalle del motor."];
-        }
+        if (errorOut) *errorOut = [NSString stringWithFormat:@"No se pudo abrir el contenedor de %@. %@", bundleId ?: @"(sin bundleId)", containerError ?: @"Sin detalle del motor."];
         return nil;
     }
     NSString *fileName = [self safePathComponent:option.fileName];
@@ -1701,9 +1621,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         return nil;
     }
     route = [route stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
-    while ([route hasPrefix:@"/"]) {
-        route = [route substringFromIndex:1];
-    }
+    while ([route hasPrefix:@"/"]) route = [route substringFromIndex:1];
     NSURL *destinationFolder = [NSURL fileURLWithPath:container isDirectory:YES];
     NSArray<NSString *> *components = [route componentsSeparatedByString:@"/"];
     NSUInteger validIndex = 0;
@@ -1712,17 +1630,13 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         if (component.length == 0) continue;
         component = [self normalizedRouteComponent:component index:validIndex];
         if (![self safePathComponent:component]) {
-            if (errorOut) {
-                *errorOut = [NSString stringWithFormat:@"La ruta contiene un componente inválido: %@", component];
-            }
+            if (errorOut) *errorOut = [NSString stringWithFormat:@"La ruta contiene un componente inválido: %@", component];
             return nil;
         }
         NSString *componentError = nil;
         NSURL *next = XITForgeExistingDirectoryChild(destinationFolder, component, &componentError);
         if (!next) {
-            if (errorOut) {
-                *errorOut = [NSString stringWithFormat:@"La ruta del panel no existe en el juego. %@", componentError ?: @""];
-            }
+            if (errorOut) *errorOut = [NSString stringWithFormat:@"La ruta del panel no existe en el juego. %@", componentError ?: @""];
             return nil;
         }
         destinationFolder = next;
@@ -1776,7 +1690,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [task resume];
 }
 
-#pragma mark - Download Delegate
 - (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location {
     NSString *description = downloadTask.taskDescription;
     NSArray *parts = [description componentsSeparatedByString:@"|"];
@@ -1789,34 +1702,27 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSError *writeError = nil;
     BOOL written = XITForgeWriteExactFile(location, destinationURL, &writeError);
     if (!written) {
-        NSLog(@"XITFORGE exact file write error: %@ | destination=%@", writeError, destinationURL.path);
         [self showResult:@"No se pudo agregar o reemplazar el archivo." success:NO];
         return;
     }
     NSError *verifyError = nil;
     BOOL verified = XITForgeFilesAreIdentical(location, destinationURL, &verifyError);
     if (!verified) {
-        NSLog(@"XITFORGE verification failed: %@ | destination=%@", verifyError, destinationURL.path);
         [self showResult:@"El archivo se descargó, pero no quedó verificado en la ruta final." success:NO];
         return;
     }
-    NSLog(@"XITFORGE VERIFIED destination=%@", destinationURL.path);
     [self showResult:@"Archivo agregado y verificado correctamente." success:YES];
 }
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     [self.activityIndicator stopAnimating];
     if (error) {
-        NSLog(@"XITFORGE download error: %@", error);
         [self showResult:@"No se pudo descargar el archivo." success:NO];
     }
     [session finishTasksAndInvalidate];
-    if (self.downloadSession == session) {
-        self.downloadSession = nil;
-    }
+    if (self.downloadSession == session) self.downloadSession = nil;
 }
 
-#pragma mark - Result
 - (void)showResult:(NSString *)message success:(BOOL)success {
     [self.activityIndicator stopAnimating];
     if (self.activationInProgress && self.pendingActivationOptions.count > 0) {
@@ -1857,7 +1763,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 @implementation HomeViewController
 
-#pragma mark - Lifecycle
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor blackColor];
@@ -1867,7 +1772,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [self setupUI];
 }
 
-#pragma mark - UI
 - (void)setupUI {
     UIColor *primaryText = [UIColor colorWithWhite:0.97 alpha:1.0];
     UIColor *secondaryText = [UIColor colorWithWhite:0.58 alpha:1.0];
@@ -1998,7 +1902,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     ]];
 }
 
-#pragma mark - Buttons
 - (void)btnNormalTapped {
     [self openOptionsForGame:@"freefire_normal" bundleID:@"com.dts.freefireth"];
 }
@@ -2007,7 +1910,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [self openOptionsForGame:@"freefire_max" bundleID:@"com.dts.freefiremax"];
 }
 
-#pragma mark - Open Options
 - (void)openOptionsForGame:(NSString *)game bundleID:(NSString *)bundleID {
     XITForgeOptionsViewController *optionsVC = [[XITForgeOptionsViewController alloc] init];
     optionsVC.game = game;
