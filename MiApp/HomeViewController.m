@@ -1527,7 +1527,7 @@ static NSURL *XITForgeExistingDirectoryChild(
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
                 return;
             }
-            [items addObject:@{"downloadURL": downloadURL, "destinationURL": destinationURL}];
+            [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
         }
         [self restoreOriginalItems:items index:0];
     });
