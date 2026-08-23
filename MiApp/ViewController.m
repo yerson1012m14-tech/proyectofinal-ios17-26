@@ -1,48 +1,58 @@
 #import "ViewController.h"
 #import <dlfcn.h>
 
-/*
- * FilzaJailedDS no exporta las funciones MCMFilza* del motor anterior.
- * El explorador queda limitado al sandbox propio de XITFORGE.
- */
 static void asegurarMotor(void) {
-    /* No se llama ningún inicializador manual del dylib. */
 }
 
 static NSString *mcmVirtualRoot(void) {
     asegurarMotor();
-
-    NSString *home =
-        [NSHomeDirectory() stringByStandardizingPath];
-
+    NSString *home = [NSHomeDirectory() stringByStandardizingPath];
     BOOL isDirectory = NO;
-    if ([[NSFileManager defaultManager]
-            fileExistsAtPath:home
-                 isDirectory:&isDirectory] &&
-        isDirectory) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] && isDirectory) {
         return home;
     }
-
     return nil;
 }
 
 static NSString *containerPath(NSString *bid) {
     if (bid.length == 0) return nil;
-
     asegurarMotor();
-
-    NSString *currentBundleId =
-        [NSBundle mainBundle].bundleIdentifier ?: @"";
-
-    if (![bid isEqualToString:currentBundleId]) {
-        NSLog(
-            @"XITFORGE Explorer: %@ fuera del sandbox propio; acceso no disponible",
-            bid
-        );
-        return nil;
+    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
+    if ([bid isEqualToString:currentBundleId]) {
+        return mcmVirtualRoot();
     }
-
-    return mcmVirtualRoot();
+    @try {
+        Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
+        if (!wsClass || ![wsClass respondsToSelector:@selector(defaultWorkspace)]) return nil;
+        id workspace = [wsClass performSelector:@selector(defaultWorkspace)];
+        if (!workspace || ![workspace respondsToSelector:@selector(allApplications)]) return nil;
+        NSArray *allApps = [workspace performSelector:@selector(allApplications)];
+        if (!allApps) return nil;
+        for (id proxy in allApps) {
+            @try {
+                if (![proxy respondsToSelector:@selector(applicationIdentifier)]) continue;
+                NSString *appBundleId = [proxy performSelector:@selector(applicationIdentifier)];
+                if (![appBundleId isEqualToString:bid]) continue;
+                if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
+                    NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
+                    if (dataContainerURL && dataContainerURL.path) {
+                        NSLog(@"XITFORGE Explorer: DataContainer de %@ = %@", bid, dataContainerURL.path);
+                        return dataContainerURL.path;
+                    }
+                }
+                if ([proxy respondsToSelector:@selector(containerURL)]) {
+                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
+                    if (containerURL && containerURL.path) {
+                        NSLog(@"XITFORGE Explorer: Container de %@ = %@", bid, containerURL.path);
+                        return containerURL.path;
+                    }
+                }
+            } @catch (NSException *e) { continue; }
+        }
+    } @catch (NSException *e) {
+        NSLog(@"XITFORGE Explorer: Error al obtener contenedor de %@: %@", bid, e.reason);
+    }
+    return nil;
 }
 
 static NSString *fmtSize(unsigned long long b) {
@@ -69,13 +79,11 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
 @end
 
 @implementation TextViewVC
-
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = colorFondo();
     self.title = self.ruta.lastPathComponent;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
-    
     UITextView *tv = [[UITextView alloc] initWithFrame:self.view.bounds];
     tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     tv.editable = NO;
@@ -85,10 +93,8 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     tv.font = [UIFont fontWithName:@"Menlo" size:11];
     tv.contentInset = UIEdgeInsetsMake(10, 10, 10, 10);
     [self.view addSubview:tv];
-    
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:self.ruta error:nil];
     unsigned long long size = [[attrs objectForKey:@"NSFileSize"] unsignedLongLongValue];
-    
     if (size > 2 * 1024 * 1024) {
         tv.text = [NSString stringWithFormat:@"(archivo demasiado grande: %@)", fmtSize(size)];
         tv.textColor = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:1.0];
@@ -99,7 +105,6 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
         if (!s) tv.textColor = textoGris();
     }
 }
-
 @end
 
 #pragma mark - Navegador de carpetas
@@ -110,13 +115,11 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
 @end
 
 @implementation FileBrowserVC
-
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = colorFondo();
     self.title = self.ruta.lastPathComponent;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
-    
     self.tv = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tv.backgroundColor = colorFondo();
@@ -126,8 +129,9 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     self.tv.delegate = self;
     self.tv.contentInset = UIEdgeInsetsMake(0, 0, 60, 0);
     [self.view addSubview:self.tv];
-[self recargar];
+    [self recargar];
 }
+
 - (void)recargar {
     NSMutableArray *dirs = [NSMutableArray new], *files = [NSMutableArray new];
     NSArray *all = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:self.ruta error:nil];
@@ -160,7 +164,6 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     c.textLabel.font = [UIFont fontWithName:@"Menlo" size:13];
     c.detailTextLabel.font = [UIFont fontWithName:@"Menlo" size:10];
     c.detailTextLabel.textColor = textoGris();
-    
     if ([n isEqualToString:@".."]) {
         ponerIcono(c, @"arrow.uturn.left", textoGris());
         c.textLabel.textColor = textoGris();
@@ -203,15 +206,9 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     }
 }
 
-- (BOOL)tableView:(UITableView *)tableView
-canEditRowAtIndexPath:(NSIndexPath *)indexPath {
-    /*
-     * Explorador de solo lectura:
-     * no hay swipe-to-delete ni borrado de archivos/carpetas.
-     */
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     return NO;
 }
-
 @end
 
 #pragma mark - Pantalla principal (Explorador)
@@ -223,21 +220,16 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
 @end
 
 @implementation ViewController
-
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = colorFondo();
     self.title = @"Explorar";
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeAlways;
-    
     UIBarButtonItem *refreshBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.clockwise"] style:UIBarButtonItemStylePlain target:self action:@selector(cargarApps)];
     refreshBtn.tintColor = acento();
-    
     UIBarButtonItem *rootBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"folder"] style:UIBarButtonItemStylePlain target:self action:@selector(irARaiz)];
     rootBtn.tintColor = acento();
-    
     self.navigationItem.rightBarButtonItems = @[refreshBtn, rootBtn];
-    
     self.apps = [NSMutableArray new];
     self.tv = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -246,10 +238,8 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     self.tv.separatorInset = UIEdgeInsetsMake(0, 15, 0, 15);
     self.tv.dataSource = self;
     self.tv.delegate = self;
-    
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 60)];
     header.backgroundColor = colorFondo();
-    
     self.campo = [[UITextField alloc] initWithFrame:CGRectMake(12, 10, header.bounds.size.width - 24, 40)];
     self.campo.placeholder = @"bundle id + return";
     self.campo.backgroundColor = colorCard();
@@ -262,7 +252,6 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     self.campo.autocorrectionType = UITextAutocorrectionTypeNo;
     self.campo.returnKeyType = UIReturnKeyDone;
     self.campo.delegate = self;
-    
     UIImageView *lupa = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 24, 20)];
     lupa.image = [[UIImage systemImageNamed:@"magnifyingglass"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
     lupa.tintColor = textoGris();
@@ -272,7 +261,6 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     [header addSubview:self.campo];
     self.tv.tableHeaderView = header;
     [self.view addSubview:self.tv];
-    
     self.vacioLabel = [[UILabel alloc] initWithFrame:CGRectMake(30, 150, self.view.bounds.size.width - 60, 120)];
     self.vacioLabel.numberOfLines = 0;
     self.vacioLabel.textAlignment = NSTextAlignmentCenter;
@@ -281,7 +269,6 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     self.vacioLabel.text = @"No se detectaron apps.\nEscribe arriba el bundle ID\nde una app instalada.";
     self.vacioLabel.hidden = YES;
     [self.view addSubview:self.vacioLabel];
-    
     [self cargarApps];
 }
 
@@ -320,22 +307,14 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
                 }
             }
         }
-        
         NSString *root = mcmVirtualRoot();
         if (root.length > 0) {
-            NSString *appData =
-                [root stringByAppendingPathComponent:@"[MHA-C2] App Data"];
-            NSArray<NSString *> *entries =
-                [[NSFileManager defaultManager]
-                    contentsOfDirectoryAtPath:appData
-                    error:nil];
+            NSString *appData = [root stringByAppendingPathComponent:@"[MHA-C2] App Data"];
+            NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appData error:nil];
             for (NSString *bid in entries ?: @[]) {
-                if (bid.length > 0 && ![bid hasPrefix:@"."]) {
-                    [set addObject:bid];
-                }
+                if (bid.length > 0 && ![bid hasPrefix:@"."]) [set addObject:bid];
             }
         }
-
         [self.apps removeAllObjects];
         [self.apps addObjectsFromArray:[set array]];
         [self.apps sortUsingSelector:@selector(localizedStandardCompare:)];
@@ -384,22 +363,17 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
     @try {
         bid = [bid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (!bid.length) return;
-        
         if (self.navigationController && self.navigationController.viewControllers.count > 1) {
             [self.navigationController popToRootViewControllerAnimated:NO];
         }
         NSString *p = nil;
         @try { p = containerPath(bid); } @catch (NSException *e) { p = nil; }
-        
         if (!p) {
-            UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Sin contenedor"
-                message:[NSString stringWithFormat:@"%@ no devolvió ruta (no instalada?)", bid]
-                preferredStyle:UIAlertControllerStyleAlert];
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Sin contenedor" message:[NSString stringWithFormat:@"%@ no devolvió ruta (no instalada?)", bid] preferredStyle:UIAlertControllerStyleAlert];
             [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:a animated:YES completion:nil];
             return;
         }
-        
         FileBrowserVC *fb = [FileBrowserVC new];
         fb.ruta = p;
         [self.navigationController pushViewController:fb animated:YES];
@@ -407,5 +381,4 @@ canEditRowAtIndexPath:(NSIndexPath *)indexPath {
         NSLog(@"Error al abrir contenedor: %@", exception);
     }
 }
-
 @end
