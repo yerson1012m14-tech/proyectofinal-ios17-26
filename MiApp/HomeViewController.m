@@ -478,30 +478,61 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 - (BOOL)originalDictionaryMatchesCurrentDeactivation:(NSDictionary *)raw {
     if (self.deactivationTargetsAll) return YES;
     
+    // Extraer fileName y route del original del servidor
+    NSString *originalFileName = nil;
+    NSString *originalRoute = nil;
+    
+    if ([raw[@"fileName"] isKindOfClass:[NSString class]]) {
+        originalFileName = raw[@"fileName"];
+    } else if ([raw[@"file"] isKindOfClass:[NSString class]]) {
+        originalFileName = raw[@"file"];
+    }
+    
+    if ([raw[@"route"] isKindOfClass:[NSString class]]) {
+        originalRoute = raw[@"route"];
+    }
+    
     NSString *key = [self activationKeyForOriginalDictionary:raw];
-    NSLog(@"XITFORGE DEACT: Comparando '%@' contra targets=%@", key, self.deactivationTargetKeys);
+    NSLog(@"XITFORGE DEACT: Comparando key='%@' targets=%@ originalFileName='%@'", key, self.deactivationTargetKeys, originalFileName);
     
     if (key.length == 0) return NO;
     
-    // Comparación exacta primero
+    // 1. Comparación exacta primero
     if ([self.deactivationTargetKeys containsObject:key]) return YES;
     
-    // Comparación flexible: extraer fileName y comparar por partes
+    // 2. Comparación flexible
     for (NSString *targetKey in self.deactivationTargetKeys) {
-        NSArray *targetParts = [targetKey componentsSeparatedByString:@"|"];
-        NSArray *keyParts = [key componentsSeparatedByString:@"|"];
         
-        if (targetParts.count == 2 && keyParts.count == 2) {
-            NSString *targetFile = targetParts[1];
-            NSString *keyFile = keyParts[1];
-            if ([targetFile caseInsensitiveCompare:keyFile] == NSOrderedSame) {
-                NSLog(@"XITFORGE DEACT: Coincidencia flexible por fileName: %@", keyFile);
-                return YES;
+        // Caso A: targetKey es "file:route|fileName"
+        if ([targetKey hasPrefix:@"file:"]) {
+            NSString *afterPrefix = [targetKey substringFromIndex:5];
+            NSArray *targetParts = [afterPrefix componentsSeparatedByString:@"|"];
+            if (targetParts.count == 2 && originalFileName) {
+                NSString *targetFile = targetParts[1];
+                if ([targetFile caseInsensitiveCompare:originalFileName] == NSOrderedSame) {
+                    NSLog(@"XITFORGE DEACT: Match flexible por fileName: %@", targetFile);
+                    return YES;
+                }
+            }
+        }
+        
+        // Caso B: targetKey es "id:X" → buscar la opción con ese id y comparar fileName
+        if ([targetKey hasPrefix:@"id:"]) {
+            NSString *idStr = [targetKey substringFromIndex:3];
+            for (XITForgeOption *opt in self.options) {
+                if (opt.optionId && [opt.optionId.stringValue isEqualToString:idStr]) {
+                    if (opt.fileName && originalFileName &&
+                        [opt.fileName caseInsensitiveCompare:originalFileName] == NSOrderedSame) {
+                        NSLog(@"XITFORGE DEACT: Match por id=%@ → fileName=%@", idStr, originalFileName);
+                        return YES;
+                    }
+                    break;
+                }
             }
         }
     }
     
-    NSLog(@"XITFORGE DEACT: No se encontró coincidencia para '%@'", key);
+    NSLog(@"XITFORGE DEACT: No match para key='%@'", key);
     return NO;
 }
 
