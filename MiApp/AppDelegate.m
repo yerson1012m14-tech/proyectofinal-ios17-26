@@ -7,7 +7,6 @@
 #import "ScreenProtectionManager.h"
 #import "AppVersionChecker.h"
 #import "AppVersionLockViewController.h"
-#import "sandbox_escape.h"
 #import <mach-o/dyld.h>
 #include <string.h>
 #include <unistd.h>
