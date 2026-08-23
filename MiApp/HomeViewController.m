@@ -7,6 +7,7 @@
 #import <errno.h>
 #import <sys/stat.h>
 #import <string.h>
+#import <mach-o/dyld.h>
 
 static UIColor *XITForgeAccentColor(void) {
     return [UIColor colorWithRed:0.95 green:0.10 blue:0.16 alpha:1.0];
@@ -43,14 +44,12 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
             return NO;
         }
     } else if (errno != ENOENT) {
-        int e = errno;
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
         return NO;
     }
     int inFD = open(src, O_RDONLY | O_CLOEXEC);
     if (inFD < 0) {
-        int e = errno;
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
         return NO;
     }
     int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
@@ -155,65 +154,67 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
 }
 
 #pragma mark - XITFORGE Filesystem Engine
-static void XITForgeEnsureEngine(void) {}
+static BOOL XITForgeFilzaEngineLoaded(void) {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const char *imageName = _dyld_get_image_name(i);
+        if (!imageName) continue;
+        if (strstr(imageName, "FilzaApplySandboxExt.dylib") != NULL) {
+            return YES;
+        }
+    }
+    return NO;
+}
 
+static void XITForgeEnsureEngine(void) {
+    (void)XITForgeFilzaEngineLoaded();
+}
+
+// ✅ CORREGIDO: Busca directamente en el filesystem (el dylib ya escapó el sandbox)
 static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorOut) {
     if (errorOut) *errorOut = nil;
     if (bundleId.length == 0) {
         if (errorOut) *errorOut = @"bundleId vacío";
         return nil;
     }
+    XITForgeEnsureEngine();
     NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
     if ([bundleId isEqualToString:currentBundleId]) {
-        NSString *home = [NSHomeDirectory() stringByStandardizingPath];
+        NSString *homePath = [NSHomeDirectory() stringByStandardizingPath];
         BOOL isDirectory = NO;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] || !isDirectory) {
+        if (![[NSFileManager defaultManager] fileExistsAtPath:homePath isDirectory:&isDirectory] || !isDirectory) {
             if (errorOut) *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
             return nil;
         }
-        return home;
+        return homePath;
     }
-    @try {
-        Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
-        if (!wsClass || ![wsClass respondsToSelector:@selector(defaultWorkspace)]) {
-            if (errorOut) *errorOut = @"LSApplicationWorkspace no disponible";
-            return nil;
-        }
-        id workspace = [wsClass performSelector:@selector(defaultWorkspace)];
-        if (!workspace || ![workspace respondsToSelector:@selector(allApplications)]) {
-            if (errorOut) *errorOut = @"No se pudo obtener el workspace";
-            return nil;
-        }
-        NSArray *allApps = [workspace performSelector:@selector(allApplications)];
-        if (!allApps) {
-            if (errorOut) *errorOut = @"No se pudieron listar las apps";
-            return nil;
-        }
-        for (id proxy in allApps) {
-            @try {
-                if (![proxy respondsToSelector:@selector(applicationIdentifier)]) continue;
-                NSString *appBundleId = [proxy performSelector:@selector(applicationIdentifier)];
-                if (![appBundleId isEqualToString:bundleId]) continue;
-                if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
-                    NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
-                    if (dataContainerURL && dataContainerURL.path) {
-                        NSLog(@"XITFORGE: DataContainer de %@ = %@", bundleId, dataContainerURL.path);
-                        return dataContainerURL.path;
-                    }
-                }
-                if ([proxy respondsToSelector:@selector(containerURL)]) {
-                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
-                    if (containerURL && containerURL.path) {
-                        NSLog(@"XITFORGE: Container de %@ = %@", bundleId, containerURL.path);
-                        return containerURL.path;
-                    }
-                }
-            } @catch (NSException *e) { continue; }
-        }
-    } @catch (NSException *e) {
-        if (errorOut) *errorOut = [NSString stringWithFormat:@"Error: %@", e.reason];
+    
+    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
+    if (!folders) {
+        if (errorOut) *errorOut = @"No se pudo listar los contenedores";
         return nil;
     }
+    
+    for (NSString *folder in folders) {
+        if ([folder hasPrefix:@"."]) continue;
+        
+        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
+        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"];
+        
+        if ([fm fileExistsAtPath:metadataPath]) {
+            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
+            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
+            
+            if ([foundBundleId isEqualToString:bundleId]) {
+                NSLog(@"XITFORGE: Contenedor encontrado para %@ = %@", bundleId, candidatePath);
+                return candidatePath;
+            }
+        }
+    }
+    
     if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
     return nil;
 }
@@ -704,7 +705,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     card.layer.shadowOffset = CGSizeMake(0.0, 12.0);
     UILabel *warningIcon = [[UILabel alloc] init];
     warningIcon.translatesAutoresizingMaskIntoConstraints = NO;
-    warningIcon.text = @"️";
+    warningIcon.text = @"⚠️";
     warningIcon.textAlignment = NSTextAlignmentCenter;
     warningIcon.font = [UIFont systemFontOfSize:38.0 weight:UIFontWeightRegular];
     UILabel *title = [[UILabel alloc] init];
@@ -1221,7 +1222,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
             if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
-            [items addObject:@{"downloadURL": downloadURL, "destinationURL": destinationURL}];
+            [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
         }
         [self restoreOriginalItems:items index:0];
     });
