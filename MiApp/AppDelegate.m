@@ -205,14 +205,12 @@
         [[UITabBarController alloc] init];
 
     /*
-     * EXPLORAR queda creado arriba y su código NO se borra.
-     * Simplemente no lo incluimos por ahora en las pestañas visibles.
-     * Para mostrarlo otra vez, basta con volver a agregar explorerNav
-     * a este arreglo.
+     * EXPLORAR activado como pestaña visible entre Inicio y Ajustes.
      */
     self.mainTabBar.viewControllers =
         @[
             homeNav,
+            explorerNav,
             settingsNav
         ];
 
