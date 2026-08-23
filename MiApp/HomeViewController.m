@@ -391,6 +391,8 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 @property (nonatomic, assign) BOOL deactivationInProgress;
 @property (nonatomic, strong) UIView *aimbotWarningOverlay;
 @property (nonatomic, strong) NSMutableSet<NSString *> *activeOptionKeys;
+@property (nonatomic, strong) NSSet<NSString *> *deactivationTargetKeys;
+@property (nonatomic, assign) BOOL deactivationTargetsAll;
 @property (nonatomic, strong) AVAudioPlayer *activationAudioPlayer;
 @property (nonatomic, strong) NSURLSession *downloadSession;
 @end
@@ -445,6 +447,133 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 - (void)clearActivatedOptions {
     [self.activeOptionKeys removeAllObjects];
     [self persistActiveOptions];
+}
+
+- (NSArray<XITForgeOption *> *)activeOptionsForDeactivation {
+    NSMutableArray<XITForgeOption *> *active = [NSMutableArray array];
+
+    for (XITForgeOption *option in self.options) {
+        if ([self isOptionActivated:option]) {
+            [active addObject:option];
+        }
+    }
+
+    return [active copy];
+}
+
+- (NSString *)activationKeyForOriginalDictionary:(NSDictionary *)raw {
+    NSNumber *itemId =
+        [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
+
+    if (itemId != nil) {
+        return [NSString stringWithFormat:@"id:%@", itemId.stringValue];
+    }
+
+    NSString *route =
+        [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : @"";
+
+    NSString *fileName =
+        [raw[@"fileName"] isKindOfClass:[NSString class]]
+            ? raw[@"fileName"]
+            : ([raw[@"file"] isKindOfClass:[NSString class]] ? raw[@"file"] : @"");
+
+    return [NSString stringWithFormat:@"file:%@|%@", route, fileName];
+}
+
+- (BOOL)originalDictionaryMatchesCurrentDeactivation:(NSDictionary *)raw {
+    if (self.deactivationTargetsAll) return YES;
+
+    NSString *key = [self activationKeyForOriginalDictionary:raw];
+    if (key.length == 0) return NO;
+
+    return [self.deactivationTargetKeys containsObject:key];
+}
+
+- (void)prepareDeactivationForOption:(XITForgeOption *)option {
+    if (!option) return;
+
+    NSString *key = [self activationKeyForOption:option];
+    if (key.length == 0) return;
+
+    self.deactivationTargetsAll = NO;
+    self.deactivationTargetKeys = [NSSet setWithObject:key];
+
+    [self deactivateAllOptions];
+}
+
+- (void)prepareDeactivationForAllActiveOptions {
+    NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
+    NSMutableSet<NSString *> *keys = [NSMutableSet set];
+
+    for (XITForgeOption *option in active) {
+        NSString *key = [self activationKeyForOption:option];
+        if (key.length > 0) [keys addObject:key];
+    }
+
+    self.deactivationTargetsAll = YES;
+    self.deactivationTargetKeys = [keys copy];
+
+    [self deactivateAllOptions];
+}
+
+- (void)showDeactivationChooser {
+    if (self.activationInProgress || self.deactivationInProgress) return;
+
+    NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
+
+    if (active.count == 0) {
+        self.selectionHintLabel.text = @"NO HAY OPCIONES ACTIVAS";
+        self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
+        return;
+    }
+
+    UIAlertController *sheet =
+        [UIAlertController alertControllerWithTitle:@"¿QUÉ DESEA DESACTIVAR?"
+                                            message:@"Selecciona una opción activa."
+                                     preferredStyle:UIAlertControllerStyleActionSheet];
+
+    __weak typeof(self) weakSelf = self;
+
+    for (XITForgeOption *option in active) {
+        NSString *title = option.name.length > 0 ? option.name : @"OPCIÓN ACTIVA";
+
+        UIAlertAction *action =
+            [UIAlertAction actionWithTitle:title
+                                     style:UIAlertActionStyleDefault
+                                   handler:^(__unused UIAlertAction * _Nonnull action) {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                [strongSelf prepareDeactivationForOption:option];
+            }];
+
+        [sheet addAction:action];
+    }
+
+    if (active.count > 1) {
+        UIAlertAction *all =
+            [UIAlertAction actionWithTitle:@"DESACTIVAR TODOS"
+                                     style:UIAlertActionStyleDestructive
+                                   handler:^(__unused UIAlertAction * _Nonnull action) {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                [strongSelf prepareDeactivationForAllActiveOptions];
+            }];
+
+        [sheet addAction:all];
+    }
+
+    [sheet addAction:
+        [UIAlertAction actionWithTitle:@"CANCELAR"
+                                 style:UIAlertActionStyleCancel
+                               handler:nil]];
+
+    UIPopoverPresentationController *popover = sheet.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = self.deactivateButton;
+        popover.sourceRect = self.deactivateButton.bounds;
+    }
+
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)configureNavigationTitle {
@@ -878,7 +1007,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     self.deactivateButton.layer.cornerRadius = 17.0;
     self.deactivateButton.layer.borderWidth = 1.0;
     self.deactivateButton.layer.borderColor = [XITForgeAccentColor() colorWithAlphaComponent:0.34].CGColor;
-    [self.deactivateButton addTarget:self action:@selector(deactivateAllOptions) forControlEvents:UIControlEventTouchUpInside];
+    [self.deactivateButton addTarget:self action:@selector(showDeactivationChooser) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.deactivateButton];
     self.activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
     self.activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1177,18 +1306,35 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     self.deactivateButton.enabled = YES;
     self.deactivateButton.alpha = 1.0;
     if (noOriginals) {
+        self.deactivationTargetKeys = nil;
+        self.deactivationTargetsAll = NO;
+
         [self updateActivateButtonForCurrentSelection];
         self.selectionHintLabel.text = @"SIN ORIGINALES CONFIGURADOS";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
         return;
     }
     if (success) {
-        [self clearActivatedOptions];
+        if (self.deactivationTargetsAll) {
+            [self clearActivatedOptions];
+        } else {
+            for (NSString *key in self.deactivationTargetKeys) {
+                [self.activeOptionKeys removeObject:key];
+            }
+            [self persistActiveOptions];
+        }
+
+        self.deactivationTargetKeys = nil;
+        self.deactivationTargetsAll = NO;
+
         self.selectionHintLabel.text = @"✓  DESACTIVADO";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.92 alpha:1.0];
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
     } else {
+        self.deactivationTargetKeys = nil;
+        self.deactivationTargetsAll = NO;
+
         self.selectionHintLabel.text = @"NO SE PUDO DESACTIVAR";
         self.selectionHintLabel.textColor = XITForgeAccentColor();
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
@@ -1206,8 +1352,17 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSString *responseBundleId = [dictionary[@"bundleId"] isKindOfClass:[NSString class]] ? dictionary[@"bundleId"] : self.bundleId;
         NSMutableArray *items = [NSMutableArray array];
         for (id rawItem in rawOriginals) {
-            if (![rawItem isKindOfClass:[NSDictionary class]]) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
+            if (![rawItem isKindOfClass:[NSDictionary class]]) {
+                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
+                return;
+            }
+
             NSDictionary *raw = (NSDictionary *)rawItem;
+
+            if (![self originalDictionaryMatchesCurrentDeactivation:raw]) {
+                continue;
+            }
+
             XITForgeOption *option = [[XITForgeOption alloc] init];
             option.bundleId = [raw[@"bundleId"] isKindOfClass:[NSString class]] ? raw[@"bundleId"] : responseBundleId;
             option.route = [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : nil;
@@ -1224,6 +1379,11 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
             [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
         }
+        if (items.count == 0) {
+            [self finishDeactivationUIWithSuccess:YES noOriginals:YES];
+            return;
+        }
+
         [self restoreOriginalItems:items index:0];
     });
 }
