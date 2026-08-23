@@ -9,7 +9,6 @@
 #import "AppVersionLockViewController.h"
 #import <mach-o/dyld.h>
 #include <string.h>
-#include <unistd.h>
 
 static BOOL XITForgeFilzaEngineLoaded(void) {
     uint32_t count = _dyld_image_count();
@@ -23,35 +22,6 @@ static BOOL XITForgeFilzaEngineLoaded(void) {
     return NO;
 }
 
-static BOOL XITForgeSandboxEscaped = NO;
-
-static void XITForgeEjecutarSandboxEscape(void) {
-    if (XITForgeSandboxEscaped) return;
-    
-    uint64_t self_proc = proc_self();
-    if (!self_proc) {
-        NSLog(@"XITFORGE: No se pudo obtener self_proc");
-        return;
-    }
-    
-    NSLog(@"XITFORGE: Ejecutando sandbox escape...");
-    int result = sandbox_escape(self_proc);
-    
-    if (result == 0) {
-        XITForgeSandboxEscaped = YES;
-        NSLog(@"XITFORGE: Sandbox escape exitoso");
-        
-        int elevateResult = sandbox_elevate_to_root(self_proc);
-        if (elevateResult == 0) {
-            NSLog(@"XITFORGE: Elevación a root exitosa");
-        } else {
-            NSLog(@"XITFORGE: Elevación a root falló con código %d", elevateResult);
-        }
-    } else {
-        NSLog(@"XITFORGE: Sandbox escape falló con código %d", result);
-    }
-}
-
 @interface AppDelegate ()
 @property (nonatomic, strong) UIWindow *lockWindow;
 @property (nonatomic, strong) UITabBarController *mainTabBar;
@@ -63,12 +33,8 @@ static void XITForgeEjecutarSandboxEscape(void) {
 @implementation AppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    
     BOOL filzaEngineLoaded = XITForgeFilzaEngineLoaded();
     [[NSUserDefaults standardUserDefaults] setBool:filzaEngineLoaded forKey:@"XITForgeFilzaEngineLoaded"];
-    
-    // ✅ EJECUTAR SANDBOX ESCAPE AL INICIO
-    XITForgeEjecutarSandboxEscape();
     
     UIColor *acento = [UIColor colorWithRed:0.2 green:1.0 blue:0.5 alpha:1.0];
     
@@ -109,11 +75,10 @@ static void XITForgeEjecutarSandboxEscape(void) {
     [settingsAppearance configureWithOpaqueBackground];
     settingsAppearance.backgroundColor = [UIColor blackColor];
     settingsAppearance.shadowColor = [UIColor colorWithWhite:0.25 alpha:1.0];
-    NSDictionary *settingsTitleAttributes = @{
+    settingsAppearance.titleTextAttributes = @{
         NSForegroundColorAttributeName: settingsRed,
         NSFontAttributeName: [UIFont fontWithName:@"Menlo-Bold" size:17.0]
     };
-    settingsAppearance.titleTextAttributes = settingsTitleAttributes;
     settingsAppearance.largeTitleTextAttributes = @{
         NSForegroundColorAttributeName: settingsRed,
         NSFontAttributeName: [UIFont boldSystemFontOfSize:32.0]
@@ -128,7 +93,6 @@ static void XITForgeEjecutarSandboxEscape(void) {
     self.mainTabBar.selectedIndex = 0;
     
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    
     UIViewController *versionGatePlaceholder = [[UIViewController alloc] init];
     versionGatePlaceholder.view.backgroundColor = [UIColor blackColor];
     self.window.rootViewController = versionGatePlaceholder;
@@ -156,13 +120,17 @@ static void XITForgeEjecutarSandboxEscape(void) {
         if (!strongSelf) return;
         strongSelf.versionCheckInProgress = NO;
         if (!success) {
-            [strongSelf mostrarBloqueoDeVersionConTitulo:@"No se pudo verificar la versión" mensaje:(errorMessage.length > 0 ? errorMessage : @"Comprueba tu conexión a Internet y vuelve a intentarlo.") versionActual:currentVersion versionRequerida:@"" downloadURL:@"" mostrarDescarga:NO];
+            [strongSelf mostrarBloqueoDeVersionConTitulo:@"No se pudo verificar la versión"
+                mensaje:(errorMessage.length > 0 ? errorMessage : @"Comprueba tu conexión a Internet y vuelve a intentarlo.")
+                versionActual:currentVersion versionRequerida:@"" downloadURL:@"" mostrarDescarga:NO];
             return;
         }
         if (blocked) {
             NSString *finalMessage = message.length > 0 ? message : @"Esta versión de XITFORGE ya no está disponible. Descarga la nueva versión para continuar.";
             NSString *required = minimumVersion.length > 0 ? minimumVersion : latestVersion;
-            [strongSelf mostrarBloqueoDeVersionConTitulo:@"Actualización requerida" mensaje:finalMessage versionActual:currentVersion versionRequerida:required downloadURL:downloadURL mostrarDescarga:(downloadURL.length > 0)];
+            [strongSelf mostrarBloqueoDeVersionConTitulo:@"Actualización requerida"
+                mensaje:finalMessage versionActual:currentVersion versionRequerida:required
+                downloadURL:downloadURL mostrarDescarga:(downloadURL.length > 0)];
             return;
         }
         BOOL firstSuccessfulVersionCheck = !strongSelf.initialVersionGateCompleted;
@@ -284,6 +252,7 @@ static void XITForgeEjecutarSandboxEscape(void) {
     [self.lockWindow.rootViewController presentViewController:licenseVC animated:YES completion:nil];
 }
 
+#pragma mark - License Logout Support
 - (void)logoutCurrentLicense {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults removeObjectForKey:@"MiFilzaLicenseKey"];
@@ -293,6 +262,7 @@ static void XITForgeEjecutarSandboxEscape(void) {
     [self mostrarVentanaDeLicencia];
 }
 
+#pragma mark - License Format
 - (BOOL)validarFormatoLicencia:(NSString *)licencia {
     if (licencia.length == 0) return NO;
     NSString *regex = @"^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$";
