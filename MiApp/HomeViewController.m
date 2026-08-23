@@ -7,6 +7,7 @@
 #import <errno.h>
 #import <sys/stat.h>
 #import <string.h>
+#import <mach-o/dyld.h>
 
 static UIColor *XITForgeAccentColor(void) {
     return [UIColor colorWithRed:0.95 green:0.10 blue:0.16 alpha:1.0];
@@ -148,45 +149,84 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
     return identical;
 }
 
-static void XITForgeEnsureEngine(void) {}
+static BOOL XITForgeFilzaEngineLoaded(void) {
+    uint32_t count = _dyld_image_count();
+
+    for (uint32_t i = 0; i < count; i++) {
+        const char *imageName = _dyld_get_image_name(i);
+        if (!imageName) continue;
+
+        if (strstr(imageName, "FilzaApplySandboxExt.dylib") != NULL) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
+
+static void XITForgeEnsureEngine(void) {
+    /*
+     * Compatibilidad segura con FilzaJailedDS:
+     * solo comprobamos si el dylib está cargado.
+     *
+     * No invocamos TweakInit, sandbox_escape ni una API privada
+     * para resolver contenedores de otras aplicaciones.
+     */
+    (void)XITForgeFilzaEngineLoaded();
+}
 
 static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorOut) {
     if (errorOut) *errorOut = nil;
+
     if (bundleId.length == 0) {
         if (errorOut) *errorOut = @"bundleId vacío";
         return nil;
     }
-    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
+
+    XITForgeEnsureEngine();
+
+    NSString *currentBundleId =
+        [NSBundle mainBundle].bundleIdentifier ?: @"";
+
     if ([bundleId isEqualToString:currentBundleId]) {
-        NSString *home = [NSHomeDirectory() stringByStandardizingPath];
+        NSString *homePath =
+            [NSHomeDirectory() stringByStandardizingPath];
+
         BOOL isDirectory = NO;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] || !isDirectory) {
-            if (errorOut) *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
+
+        if (![[NSFileManager defaultManager]
+                fileExistsAtPath:homePath
+                     isDirectory:&isDirectory] ||
+            !isDirectory) {
+
+            if (errorOut) {
+                *errorOut =
+                    @"No se pudo resolver el contenedor propio de XITFORGE.";
+            }
+
             return nil;
         }
-        return home;
+
+        return homePath;
     }
-    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
-    if (!folders) {
-        if (errorOut) *errorOut = @"No se pudo listar los contenedores";
-        return nil;
-    }
-    for (NSString *folder in folders) {
-        if ([folder hasPrefix:@"."]) continue;
-        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
-        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@"com.apple.mobile_container_manager.metadata.plist"];
-        if ([fm fileExistsAtPath:metadataPath]) {
-            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
-            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
-            if ([foundBundleId isEqualToString:bundleId]) {
-                NSLog(@"XITFORGE: Contenedor encontrado para %@ = %@", bundleId, candidatePath);
-                return candidatePath;
-            }
+
+    BOOL engineLoaded = XITForgeFilzaEngineLoaded();
+
+    if (errorOut) {
+        if (engineLoaded) {
+            *errorOut =
+                [NSString stringWithFormat:
+                    @"FilzaApplySandboxExt está cargado, pero no expone una "
+                     "API de contenedores compatible para %@.",
+                    bundleId];
+        } else {
+            *errorOut =
+                [NSString stringWithFormat:
+                    @"No hay una ruta autorizada disponible para %@.",
+                    bundleId];
         }
     }
-    if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
+
     return nil;
 }
 
