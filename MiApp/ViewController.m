@@ -265,7 +265,7 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 60)];
     header.backgroundColor = colorFondo();
     self.campo = [[UITextField alloc] initWithFrame:CGRectMake(12, 10, header.bounds.size.width - 24, 40)];
-    self.campo.placeholder = @"XITFORGE / self / bundle id propio";
+    self.campo.placeholder = @"bundle id + return";
     self.campo.backgroundColor = colorCard();
     self.campo.layer.cornerRadius = 12;
     self.campo.layer.borderWidth = 1;
@@ -290,7 +290,7 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     self.vacioLabel.textAlignment = NSTextAlignmentCenter;
     self.vacioLabel.textColor = textoGris();
     self.vacioLabel.font = [UIFont fontWithName:@"Menlo" size:12];
-    self.vacioLabel.text = @"No hay otros contenedores accesibles.\nAbre XITFORGE o escribe self.";
+    self.vacioLabel.text = @"No se detectaron bundle IDs.\nPuedes escribir uno manualmente arriba.";
     self.vacioLabel.hidden = YES;
     [self.view addSubview:self.vacioLabel];
     [self cargarApps];
@@ -340,14 +340,83 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     @try {
         [self.apps removeAllObjects];
 
+        NSMutableOrderedSet<NSString *> *bundleIds =
+            [NSMutableOrderedSet orderedSet];
+
+        /*
+         * Mostrar los bundle IDs instalados.
+         * Esto solo enumera identificadores; no concede acceso a sus contenedores.
+         */
+        Class workspaceClass =
+            NSClassFromString(@"LSApplicationWorkspace");
+
+        SEL defaultWorkspaceSel =
+            NSSelectorFromString(@"defaultWorkspace");
+
+        SEL allApplicationsSel =
+            NSSelectorFromString(@"allApplications");
+
+        SEL applicationIdentifierSel =
+            NSSelectorFromString(@"applicationIdentifier");
+
+        if (workspaceClass &&
+            [workspaceClass respondsToSelector:defaultWorkspaceSel]) {
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id workspace =
+                [workspaceClass performSelector:defaultWorkspaceSel];
+
+            if (workspace &&
+                [workspace respondsToSelector:allApplicationsSel]) {
+
+                NSArray *allApplications =
+                    [workspace performSelector:allApplicationsSel];
+
+                for (id proxy in allApplications ?: @[]) {
+                    if (![proxy respondsToSelector:applicationIdentifierSel]) {
+                        continue;
+                    }
+
+                    NSString *bundleId =
+                        [proxy performSelector:applicationIdentifierSel];
+
+                    if (![bundleId isKindOfClass:[NSString class]] ||
+                        bundleId.length == 0) {
+                        continue;
+                    }
+
+                    /*
+                     * Ocultamos componentes internos de Apple para que la lista
+                     * sea útil y no se llene con servicios del sistema.
+                     */
+                    if ([bundleId hasPrefix:@"com.apple."]) {
+                        continue;
+                    }
+
+                    [bundleIds addObject:bundleId];
+                }
+            }
+#pragma clang diagnostic pop
+        }
+
+        /*
+         * Asegurar que XITFORGE aparezca incluso si la API anterior no devuelve
+         * la app actual.
+         */
         NSString *currentBundleId =
             [NSBundle mainBundle].bundleIdentifier ?: @"";
 
-        NSString *home = mcmVirtualRoot();
-
-        if (currentBundleId.length > 0 && home.length > 0) {
-            [self.apps addObject:currentBundleId];
+        if (currentBundleId.length > 0) {
+            [bundleIds addObject:currentBundleId];
         }
+
+        NSArray<NSString *> *sorted =
+            [[bundleIds array]
+                sortedArrayUsingSelector:
+                    @selector(localizedStandardCompare:)];
+
+        [self.apps addObjectsFromArray:sorted];
 
         self.title =
             [NSString stringWithFormat:
@@ -358,7 +427,24 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
         [self.tv reloadData];
 
     } @catch (NSException *exception) {
-        NSLog(@"Error al cargar apps: %@", exception);
+        NSLog(@"Error al cargar bundle IDs: %@", exception);
+
+        [self.apps removeAllObjects];
+
+        NSString *currentBundleId =
+            [NSBundle mainBundle].bundleIdentifier ?: @"";
+
+        if (currentBundleId.length > 0) {
+            [self.apps addObject:currentBundleId];
+        }
+
+        self.title =
+            [NSString stringWithFormat:
+                @"Explorar (%lu)",
+                (unsigned long)self.apps.count];
+
+        self.vacioLabel.hidden = (self.apps.count != 0);
+        [self.tv reloadData];
     }
 }
 
@@ -382,7 +468,7 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     c.textLabel.text = self.apps[ip.row];
     c.textLabel.textColor = acento();
     c.textLabel.font = [UIFont fontWithName:@"Menlo" size:13];
-    c.detailTextLabel.text = @"contenedor propio · solo lectura";
+    c.detailTextLabel.text = @"bundle id instalado";
     c.detailTextLabel.textColor = textoGris();
     c.detailTextLabel.font = [UIFont fontWithName:@"Menlo" size:10];
     ponerIcono(c, @"app.fill", acento());
