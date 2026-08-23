@@ -15,12 +15,6 @@ static NSString *mcmVirtualRoot(void) {
 }
 
 static NSString *containerPath(NSString *bid) {
-    if (bid.length == 0) return nil;
-    asegurarMotor();
-    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
-    if ([bid isEqualToString:currentBundleId]) {
-        return mcmVirtualRoot();
-    }
     @try {
         Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
         if (!wsClass || ![wsClass respondsToSelector:@selector(defaultWorkspace)]) return nil;
