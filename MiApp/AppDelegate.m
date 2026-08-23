@@ -89,7 +89,7 @@ static BOOL XITForgeFilzaEngineLoaded(void) {
     settingsNav.navigationBar.tintColor = settingsRed;
     
     self.mainTabBar = [[UITabBarController alloc] init];
-    self.mainTabBar.viewControllers = @[homeNav, explorerNav, settingsNav];
+    self.mainTabBar.viewControllers = @[homeNav, settingsNav];
     self.mainTabBar.selectedIndex = 0;
     
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
