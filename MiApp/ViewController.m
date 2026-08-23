@@ -1,28 +1,20 @@
 #import "ViewController.h"
 #import <dlfcn.h>
 
-/*
-FilzaJailedDS no exporta las funciones MCMFilza* del motor anterior.
-El explorador queda limitado al sandbox propio de XITFORGE.
-*/
 static void asegurarMotor(void) {
-    /* No se llama ningún inicializador manual del dylib. */
 }
 
 static NSString *mcmVirtualRoot(void) {
     asegurarMotor();
-    NSString *home =
-        [NSHomeDirectory() stringByStandardizingPath];
+    NSString *home = [NSHomeDirectory() stringByStandardizingPath];
     BOOL isDirectory = NO;
-    if ([[NSFileManager defaultManager]
-            fileExistsAtPath:home
-                 isDirectory:&isDirectory] &&
-        isDirectory) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] && isDirectory) {
         return home;
     }
     return nil;
 }
 
+// ✅ NUEVA FUNCIÓN: Busca directamente en el filesystem usando el metadata plist
 static NSString *containerPath(NSString *bid) {
     if (bid.length == 0) return nil;
     asegurarMotor();
@@ -33,12 +25,15 @@ static NSString *containerPath(NSString *bid) {
         return mcmVirtualRoot();
     }
     
-    // Para otras apps, buscar en /var/mobile/Containers/Data/Application/
+    // Para otras apps, buscar directamente en /var/mobile/Containers/Data/Application/
     NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     
     NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
-    if (!folders) return nil;
+    if (!folders) {
+        NSLog(@"XITFORGE Explorer: No se pudo listar contenedores en %@", appsRoot);
+        return nil;
+    }
     
     for (NSString *folder in folders) {
         if ([folder hasPrefix:@"."]) continue;
@@ -213,10 +208,6 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
 }
 
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
-    /*
-    Explorador de solo lectura:
-    no hay swipe-to-delete ni borrado de archivos/carpetas.
-    */
     return NO;
 }
 @end
@@ -319,16 +310,10 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
         }
         NSString *root = mcmVirtualRoot();
         if (root.length > 0) {
-            NSString *appData =
-                [root stringByAppendingPathComponent:@"[MHA-C2] App Data"];
-            NSArray<NSString *> *entries =
-                [[NSFileManager defaultManager]
-                    contentsOfDirectoryAtPath:appData
-                    error:nil];
+            NSString *appData = [root stringByAppendingPathComponent:@"[MHA-C2] App Data"];
+            NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appData error:nil];
             for (NSString *bid in entries ?: @[]) {
-                if (bid.length > 0 && ![bid hasPrefix:@"."]) {
-                    [set addObject:bid];
-                }
+                if (bid.length > 0 && ![bid hasPrefix:@"."]) [set addObject:bid];
             }
         }
         [self.apps removeAllObjects];
