@@ -196,34 +196,25 @@ static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorO
                 if (![appBundleId isEqualToString:bundleId]) continue;
                 if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
                     NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
-                    NSString *path = [dataContainerURL.path stringByStandardizingPath];
-
-                    if (path.length > 0 &&
-                        ![path isEqualToString:@"/var/mobile"] &&
-                        ![path isEqualToString:@"/var/mobile/Documents"]) {
-
-                        NSLog(@"XITFORGE: DataContainer de %@ = %@", bundleId, path);
-                        return path;
+                    if (dataContainerURL && dataContainerURL.path) {
+                        NSLog(@"XITFORGE: DataContainer de %@ = %@", bundleId, dataContainerURL.path);
+                        return dataContainerURL.path;
                     }
-
-                    NSLog(@"XITFORGE: DataContainer inválido para %@ = %@", bundleId, path ?: @"(nil)");
                 }
-
-                /*
-                 * No usar containerURL como reemplazo de dataContainerURL:
-                 * puede devolver una raíz genérica como /var/mobile y romper
-                 * la ruta final al concatenar Documents/...
-                 */
+                if ([proxy respondsToSelector:@selector(containerURL)]) {
+                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
+                    if (containerURL && containerURL.path) {
+                        NSLog(@"XITFORGE: Container de %@ = %@", bundleId, containerURL.path);
+                        return containerURL.path;
+                    }
+                }
             } @catch (NSException *e) { continue; }
         }
     } @catch (NSException *e) {
         if (errorOut) *errorOut = [NSString stringWithFormat:@"Error: %@", e.reason];
         return nil;
     }
-    if (errorOut) {
-        *errorOut = [NSString stringWithFormat:
-            @"No se obtuvo un dataContainerURL válido para %@.", bundleId];
-    }
+    if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
     return nil;
 }
 
@@ -844,8 +835,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.48 alpha:1.0];
     self.selectionHintLabel.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold];
     self.selectionHintLabel.textAlignment = NSTextAlignmentLeft;
-    self.selectionHintLabel.numberOfLines = 0;
-    self.selectionHintLabel.lineBreakMode = NSLineBreakByWordWrapping;
     [self.view addSubview:self.selectionHintLabel];
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1129,15 +1118,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
     } else {
-        NSString *detail = message.length > 0 ? message : @"Error desconocido.";
-        self.selectionHintLabel.text =
-            [NSString stringWithFormat:@"NO SE PUDO ACTIVAR\n%@", detail];
+        self.selectionHintLabel.text = message.length > 0 ? @"NO SE PUDO ACTIVAR" : @"ERROR AL ACTIVAR";
         self.selectionHintLabel.textColor = XITForgeAccentColor();
-
-        NSLog(@"[XITFORGE][ACTIVACION][ERROR] %@", detail);
-
-        UINotificationFeedbackGenerator *feedback =
-            [[UINotificationFeedbackGenerator alloc] init];
+        UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeError];
     }
     [self.tableView reloadData];
@@ -1238,7 +1221,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
             if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
-            [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
+            [items addObject:@{"downloadURL": downloadURL, "destinationURL": destinationURL}];
         }
         [self restoreOriginalItems:items index:0];
     });
@@ -1361,19 +1344,13 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSString *containerError = nil;
     NSString *container = XITForgeDataContainerPath(bundleId, &containerError);
     if (container.length == 0) {
-        if (errorOut) {
-            *errorOut =
-                [NSString stringWithFormat:
-                    @"CONTENEDOR: No se pudo abrir %@. %@",
-                    bundleId ?: @"(sin bundleId)",
-                    containerError ?: @"Sin detalle del motor."];
-        }
+        if (errorOut) *errorOut = [NSString stringWithFormat:@"No se pudo abrir el contenedor de %@. %@", bundleId ?: @"(sin bundleId)", containerError ?: @"Sin detalle del motor."];
         return nil;
     }
     NSString *fileName = [self safePathComponent:option.fileName];
-    if (fileName.length == 0) { if (errorOut) *errorOut = @"ARCHIVO: El nombre del archivo no es válido."; return nil; }
+    if (fileName.length == 0) { if (errorOut) *errorOut = @"El nombre del archivo no es válido."; return nil; }
     NSString *route = [option.route stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (route.length == 0) { if (errorOut) *errorOut = @"RUTA: La ruta configurada está vacía."; return nil; }
+    if (route.length == 0) { if (errorOut) *errorOut = @"La ruta configurada está vacía."; return nil; }
     route = [route stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
     while ([route hasPrefix:@"/"]) route = [route substringFromIndex:1];
     NSURL *destinationFolder = [NSURL fileURLWithPath:container isDirectory:YES];
@@ -1384,19 +1361,19 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         if (component.length == 0) continue;
         component = [self normalizedRouteComponent:component index:validIndex];
         if (![self safePathComponent:component]) {
-            if (errorOut) *errorOut = [NSString stringWithFormat:@"RUTA: componente inválido: %@", component];
+            if (errorOut) *errorOut = [NSString stringWithFormat:@"La ruta contiene un componente inválido: %@", component];
             return nil;
         }
         NSString *componentError = nil;
         NSURL *next = XITForgeExistingDirectoryChild(destinationFolder, component, &componentError);
         if (!next) {
-            if (errorOut) *errorOut = [NSString stringWithFormat:@"RUTA: no existe la carpeta configurada. %@", componentError ?: @""];
+            if (errorOut) *errorOut = [NSString stringWithFormat:@"La ruta del panel no existe en el juego. %@", componentError ?: @""];
             return nil;
         }
         destinationFolder = next;
         validIndex++;
     }
-    if (validIndex == 0) { if (errorOut) *errorOut = @"RUTA: no contiene ninguna carpeta válida."; return nil; }
+    if (validIndex == 0) { if (errorOut) *errorOut = @"La ruta no contiene ninguna carpeta válida."; return nil; }
     NSURL *destinationURL = [destinationFolder URLByAppendingPathComponent:fileName isDirectory:NO];
     NSLog(@"XITFORGE resolved destination: bundleId=%@ route=%@ file=%@ -> %@", bundleId, option.route, fileName, destinationURL.path);
     return destinationURL;
@@ -1433,57 +1410,22 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSURL *destinationURL = [NSURL fileURLWithPath:destinationPath];
     NSError *writeError = nil;
     BOOL written = XITForgeWriteExactFile(location, destinationURL, &writeError);
-    if (!written) {
-        NSString *detail =
-            writeError.localizedDescription.length > 0
-                ? writeError.localizedDescription
-                : @"Error de escritura desconocido.";
-        [self showResult:
-            [NSString stringWithFormat:@"ESCRITURA: %@", detail]
-                 success:NO];
-        return;
-    }
-
+    if (!written) { [self showResult:@"No se pudo agregar o reemplazar el archivo." success:NO]; return; }
     NSError *verifyError = nil;
-    BOOL verified =
-        XITForgeFilesAreIdentical(location, destinationURL, &verifyError);
-
-    if (!verified) {
-        NSString *detail =
-            verifyError.localizedDescription.length > 0
-                ? verifyError.localizedDescription
-                : @"Error de verificación desconocido.";
-        [self showResult:
-            [NSString stringWithFormat:@"VERIFICACIÓN: %@", detail]
-                 success:NO];
-        return;
-    }
+    BOOL verified = XITForgeFilesAreIdentical(location, destinationURL, &verifyError);
+    if (!verified) { [self showResult:@"El archivo se descargó, pero no quedó verificado en la ruta final." success:NO]; return; }
     [self showResult:@"Archivo agregado y verificado correctamente." success:YES];
 }
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     [self.activityIndicator stopAnimating];
-    if (error) {
-        NSString *detail =
-            error.localizedDescription.length > 0
-                ? error.localizedDescription
-                : @"Error de red desconocido.";
-
-        [self showResult:
-            [NSString stringWithFormat:@"DESCARGA: %@", detail]
-                 success:NO];
-    }
+    if (error) { [self showResult:@"No se pudo descargar el archivo." success:NO]; }
     [session finishTasksAndInvalidate];
     if (self.downloadSession == session) self.downloadSession = nil;
 }
 
 - (void)showResult:(NSString *)message success:(BOOL)success {
     [self.activityIndicator stopAnimating];
-
-    if (!success) {
-        NSLog(@"[XITFORGE][RESULTADO][ERROR] %@",
-              message.length > 0 ? message : @"Error sin detalle.");
-    }
     if (self.activationInProgress && self.pendingActivationOptions.count > 0) {
         if (!success) {
             [self finishActivationUIWithSuccess:NO message:message];
