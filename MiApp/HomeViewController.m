@@ -7,7 +7,6 @@
 #import <errno.h>
 #import <sys/stat.h>
 #import <string.h>
-#import <mach-o/dyld.h>
 
 static UIColor *XITForgeAccentColor(void) {
     return [UIColor colorWithRed:0.95 green:0.10 blue:0.16 alpha:1.0];
@@ -44,12 +43,14 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
             return NO;
         }
     } else if (errno != ENOENT) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+        int e = errno;
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
         return NO;
     }
     int inFD = open(src, O_RDONLY | O_CLOEXEC);
     if (inFD < 0) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+        int e = errno;
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
         return NO;
     }
     int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
@@ -154,68 +155,39 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
 }
 
 #pragma mark - XITFORGE Filesystem Engine
-static BOOL XITForgeFilzaEngineLoaded(void) {
-    uint32_t count = _dyld_image_count();
-    for (uint32_t i = 0; i < count; i++) {
-        const char *imageName = _dyld_get_image_name(i);
-        if (!imageName) continue;
-        if (strstr(imageName, "FilzaApplySandboxExt.dylib") != NULL) {
-            return YES;
-        }
-    }
-    return NO;
-}
+static void XITForgeEnsureEngine(void) {}
 
-static void XITForgeEnsureEngine(void) {
-    (void)XITForgeFilzaEngineLoaded();
-}
-
-// ✅ CORREGIDO: Busca directamente en el filesystem (el dylib ya escapó el sandbox)
 static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorOut) {
     if (errorOut) *errorOut = nil;
+
     if (bundleId.length == 0) {
         if (errorOut) *errorOut = @"bundleId vacío";
         return nil;
     }
-    XITForgeEnsureEngine();
+
     NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
+
     if ([bundleId isEqualToString:currentBundleId]) {
-        NSString *homePath = [NSHomeDirectory() stringByStandardizingPath];
+        NSString *home = [NSHomeDirectory() stringByStandardizingPath];
         BOOL isDirectory = NO;
-        if (![[NSFileManager defaultManager] fileExistsAtPath:homePath isDirectory:&isDirectory] || !isDirectory) {
-            if (errorOut) *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
-            return nil;
+
+        if ([[NSFileManager defaultManager] fileExistsAtPath:home
+                                                isDirectory:&isDirectory] &&
+            isDirectory) {
+            return home;
         }
-        return homePath;
-    }
-    
-    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    
-    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
-    if (!folders) {
-        if (errorOut) *errorOut = @"No se pudo listar los contenedores";
+
+        if (errorOut) {
+            *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
+        }
         return nil;
     }
-    
-    for (NSString *folder in folders) {
-        if ([folder hasPrefix:@"."]) continue;
-        
-        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
-        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"];
-        
-        if ([fm fileExistsAtPath:metadataPath]) {
-            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
-            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
-            
-            if ([foundBundleId isEqualToString:bundleId]) {
-                NSLog(@"XITFORGE: Contenedor encontrado para %@ = %@", bundleId, candidatePath);
-                return candidatePath;
-            }
-        }
+
+    if (errorOut) {
+        *errorOut = [NSString stringWithFormat:
+            @"No hay un proveedor autorizado de contenedor para %@.", bundleId];
     }
-    
-    if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
+
     return nil;
 }
 
@@ -391,6 +363,8 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 @property (nonatomic, assign) BOOL deactivationInProgress;
 @property (nonatomic, strong) UIView *aimbotWarningOverlay;
 @property (nonatomic, strong) NSMutableSet<NSString *> *activeOptionKeys;
+@property (nonatomic, strong) NSSet<NSString *> *deactivationTargetKeys;
+@property (nonatomic, assign) BOOL deactivationTargetsAll;
 @property (nonatomic, strong) AVAudioPlayer *activationAudioPlayer;
 @property (nonatomic, strong) NSURLSession *downloadSession;
 @end
@@ -445,6 +419,133 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 - (void)clearActivatedOptions {
     [self.activeOptionKeys removeAllObjects];
     [self persistActiveOptions];
+}
+
+- (NSArray<XITForgeOption *> *)activeOptionsForDeactivation {
+    NSMutableArray<XITForgeOption *> *active = [NSMutableArray array];
+
+    for (XITForgeOption *option in self.options) {
+        if ([self isOptionActivated:option]) {
+            [active addObject:option];
+        }
+    }
+
+    return [active copy];
+}
+
+- (NSString *)activationKeyForOriginalDictionary:(NSDictionary *)raw {
+    NSNumber *itemId =
+        [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
+
+    if (itemId != nil) {
+        return [NSString stringWithFormat:@"id:%@", itemId.stringValue];
+    }
+
+    NSString *route =
+        [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : @"";
+
+    NSString *fileName =
+        [raw[@"fileName"] isKindOfClass:[NSString class]]
+            ? raw[@"fileName"]
+            : ([raw[@"file"] isKindOfClass:[NSString class]] ? raw[@"file"] : @"");
+
+    return [NSString stringWithFormat:@"file:%@|%@", route, fileName];
+}
+
+- (BOOL)originalDictionaryMatchesCurrentDeactivation:(NSDictionary *)raw {
+    if (self.deactivationTargetsAll) return YES;
+
+    NSString *key = [self activationKeyForOriginalDictionary:raw];
+    if (key.length == 0) return NO;
+
+    return [self.deactivationTargetKeys containsObject:key];
+}
+
+- (void)prepareDeactivationForOption:(XITForgeOption *)option {
+    if (!option) return;
+
+    NSString *key = [self activationKeyForOption:option];
+    if (key.length == 0) return;
+
+    self.deactivationTargetsAll = NO;
+    self.deactivationTargetKeys = [NSSet setWithObject:key];
+
+    [self deactivateAllOptions];
+}
+
+- (void)prepareDeactivationForAllActiveOptions {
+    NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
+    NSMutableSet<NSString *> *keys = [NSMutableSet set];
+
+    for (XITForgeOption *option in active) {
+        NSString *key = [self activationKeyForOption:option];
+        if (key.length > 0) [keys addObject:key];
+    }
+
+    self.deactivationTargetsAll = YES;
+    self.deactivationTargetKeys = [keys copy];
+
+    [self deactivateAllOptions];
+}
+
+- (void)showDeactivationChooser {
+    if (self.activationInProgress || self.deactivationInProgress) return;
+
+    NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
+
+    if (active.count == 0) {
+        self.selectionHintLabel.text = @"NO HAY OPCIONES ACTIVAS";
+        self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
+        return;
+    }
+
+    UIAlertController *sheet =
+        [UIAlertController alertControllerWithTitle:@"¿QUÉ DESEA DESACTIVAR?"
+                                            message:@"Selecciona una opción activa."
+                                     preferredStyle:UIAlertControllerStyleActionSheet];
+
+    __weak typeof(self) weakSelf = self;
+
+    for (XITForgeOption *option in active) {
+        NSString *title = option.name.length > 0 ? option.name : @"OPCIÓN ACTIVA";
+
+        UIAlertAction *action =
+            [UIAlertAction actionWithTitle:title
+                                     style:UIAlertActionStyleDefault
+                                   handler:^(__unused UIAlertAction * _Nonnull action) {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                [strongSelf prepareDeactivationForOption:option];
+            }];
+
+        [sheet addAction:action];
+    }
+
+    if (active.count > 1) {
+        UIAlertAction *all =
+            [UIAlertAction actionWithTitle:@"DESACTIVAR TODOS"
+                                     style:UIAlertActionStyleDestructive
+                                   handler:^(__unused UIAlertAction * _Nonnull action) {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                [strongSelf prepareDeactivationForAllActiveOptions];
+            }];
+
+        [sheet addAction:all];
+    }
+
+    [sheet addAction:
+        [UIAlertAction actionWithTitle:@"CANCELAR"
+                                 style:UIAlertActionStyleCancel
+                               handler:nil]];
+
+    UIPopoverPresentationController *popover = sheet.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = self.deactivateButton;
+        popover.sourceRect = self.deactivateButton.bounds;
+    }
+
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
 - (void)configureNavigationTitle {
@@ -705,7 +806,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     card.layer.shadowOffset = CGSizeMake(0.0, 12.0);
     UILabel *warningIcon = [[UILabel alloc] init];
     warningIcon.translatesAutoresizingMaskIntoConstraints = NO;
-    warningIcon.text = @"⚠️";
+    warningIcon.text = @"️";
     warningIcon.textAlignment = NSTextAlignmentCenter;
     warningIcon.font = [UIFont systemFontOfSize:38.0 weight:UIFontWeightRegular];
     UILabel *title = [[UILabel alloc] init];
@@ -836,6 +937,8 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.48 alpha:1.0];
     self.selectionHintLabel.font = [UIFont systemFontOfSize:11.0 weight:UIFontWeightSemibold];
     self.selectionHintLabel.textAlignment = NSTextAlignmentLeft;
+    self.selectionHintLabel.numberOfLines = 0;
+    self.selectionHintLabel.lineBreakMode = NSLineBreakByWordWrapping;
     [self.view addSubview:self.selectionHintLabel];
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -878,7 +981,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     self.deactivateButton.layer.cornerRadius = 17.0;
     self.deactivateButton.layer.borderWidth = 1.0;
     self.deactivateButton.layer.borderColor = [XITForgeAccentColor() colorWithAlphaComponent:0.34].CGColor;
-    [self.deactivateButton addTarget:self action:@selector(deactivateAllOptions) forControlEvents:UIControlEventTouchUpInside];
+    [self.deactivateButton addTarget:self action:@selector(showDeactivationChooser) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.deactivateButton];
     self.activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
     self.activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1119,9 +1222,15 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
     } else {
-        self.selectionHintLabel.text = message.length > 0 ? @"NO SE PUDO ACTIVAR" : @"ERROR AL ACTIVAR";
+        NSString *detail = message.length > 0 ? message : @"Error desconocido.";
+        self.selectionHintLabel.text =
+            [NSString stringWithFormat:@"NO SE PUDO ACTIVAR\n%@", detail];
         self.selectionHintLabel.textColor = XITForgeAccentColor();
-        UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
+
+        NSLog(@"[XITFORGE][ACTIVACION][ERROR] %@", detail);
+
+        UINotificationFeedbackGenerator *feedback =
+            [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeError];
     }
     [self.tableView reloadData];
@@ -1177,18 +1286,35 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     self.deactivateButton.enabled = YES;
     self.deactivateButton.alpha = 1.0;
     if (noOriginals) {
+        self.deactivationTargetKeys = nil;
+        self.deactivationTargetsAll = NO;
+
         [self updateActivateButtonForCurrentSelection];
         self.selectionHintLabel.text = @"SIN ORIGINALES CONFIGURADOS";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
         return;
     }
     if (success) {
-        [self clearActivatedOptions];
+        if (self.deactivationTargetsAll) {
+            [self clearActivatedOptions];
+        } else {
+            for (NSString *key in self.deactivationTargetKeys) {
+                [self.activeOptionKeys removeObject:key];
+            }
+            [self persistActiveOptions];
+        }
+
+        self.deactivationTargetKeys = nil;
+        self.deactivationTargetsAll = NO;
+
         self.selectionHintLabel.text = @"✓  DESACTIVADO";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.92 alpha:1.0];
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
     } else {
+        self.deactivationTargetKeys = nil;
+        self.deactivationTargetsAll = NO;
+
         self.selectionHintLabel.text = @"NO SE PUDO DESACTIVAR";
         self.selectionHintLabel.textColor = XITForgeAccentColor();
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
@@ -1206,8 +1332,17 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSString *responseBundleId = [dictionary[@"bundleId"] isKindOfClass:[NSString class]] ? dictionary[@"bundleId"] : self.bundleId;
         NSMutableArray *items = [NSMutableArray array];
         for (id rawItem in rawOriginals) {
-            if (![rawItem isKindOfClass:[NSDictionary class]]) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
+            if (![rawItem isKindOfClass:[NSDictionary class]]) {
+                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
+                return;
+            }
+
             NSDictionary *raw = (NSDictionary *)rawItem;
+
+            if (![self originalDictionaryMatchesCurrentDeactivation:raw]) {
+                continue;
+            }
+
             XITForgeOption *option = [[XITForgeOption alloc] init];
             option.bundleId = [raw[@"bundleId"] isKindOfClass:[NSString class]] ? raw[@"bundleId"] : responseBundleId;
             option.route = [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : nil;
@@ -1224,6 +1359,11 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
             [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
         }
+        if (items.count == 0) {
+            [self finishDeactivationUIWithSuccess:YES noOriginals:YES];
+            return;
+        }
+
         [self restoreOriginalItems:items index:0];
     });
 }
@@ -1345,13 +1485,19 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSString *containerError = nil;
     NSString *container = XITForgeDataContainerPath(bundleId, &containerError);
     if (container.length == 0) {
-        if (errorOut) *errorOut = [NSString stringWithFormat:@"No se pudo abrir el contenedor de %@. %@", bundleId ?: @"(sin bundleId)", containerError ?: @"Sin detalle del motor."];
+        if (errorOut) {
+            *errorOut =
+                [NSString stringWithFormat:
+                    @"CONTENEDOR: No se pudo abrir %@. %@",
+                    bundleId ?: @"(sin bundleId)",
+                    containerError ?: @"Sin detalle del motor."];
+        }
         return nil;
     }
     NSString *fileName = [self safePathComponent:option.fileName];
-    if (fileName.length == 0) { if (errorOut) *errorOut = @"El nombre del archivo no es válido."; return nil; }
+    if (fileName.length == 0) { if (errorOut) *errorOut = @"ARCHIVO: El nombre del archivo no es válido."; return nil; }
     NSString *route = [option.route stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (route.length == 0) { if (errorOut) *errorOut = @"La ruta configurada está vacía."; return nil; }
+    if (route.length == 0) { if (errorOut) *errorOut = @"RUTA: La ruta configurada está vacía."; return nil; }
     route = [route stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
     while ([route hasPrefix:@"/"]) route = [route substringFromIndex:1];
     NSURL *destinationFolder = [NSURL fileURLWithPath:container isDirectory:YES];
@@ -1362,19 +1508,19 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         if (component.length == 0) continue;
         component = [self normalizedRouteComponent:component index:validIndex];
         if (![self safePathComponent:component]) {
-            if (errorOut) *errorOut = [NSString stringWithFormat:@"La ruta contiene un componente inválido: %@", component];
+            if (errorOut) *errorOut = [NSString stringWithFormat:@"RUTA: componente inválido: %@", component];
             return nil;
         }
         NSString *componentError = nil;
         NSURL *next = XITForgeExistingDirectoryChild(destinationFolder, component, &componentError);
         if (!next) {
-            if (errorOut) *errorOut = [NSString stringWithFormat:@"La ruta del panel no existe en el juego. %@", componentError ?: @""];
+            if (errorOut) *errorOut = [NSString stringWithFormat:@"RUTA: no existe la carpeta configurada. %@", componentError ?: @""];
             return nil;
         }
         destinationFolder = next;
         validIndex++;
     }
-    if (validIndex == 0) { if (errorOut) *errorOut = @"La ruta no contiene ninguna carpeta válida."; return nil; }
+    if (validIndex == 0) { if (errorOut) *errorOut = @"RUTA: no contiene ninguna carpeta válida."; return nil; }
     NSURL *destinationURL = [destinationFolder URLByAppendingPathComponent:fileName isDirectory:NO];
     NSLog(@"XITFORGE resolved destination: bundleId=%@ route=%@ file=%@ -> %@", bundleId, option.route, fileName, destinationURL.path);
     return destinationURL;
@@ -1411,22 +1557,57 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSURL *destinationURL = [NSURL fileURLWithPath:destinationPath];
     NSError *writeError = nil;
     BOOL written = XITForgeWriteExactFile(location, destinationURL, &writeError);
-    if (!written) { [self showResult:@"No se pudo agregar o reemplazar el archivo." success:NO]; return; }
+    if (!written) {
+        NSString *detail =
+            writeError.localizedDescription.length > 0
+                ? writeError.localizedDescription
+                : @"Error de escritura desconocido.";
+        [self showResult:
+            [NSString stringWithFormat:@"ESCRITURA: %@", detail]
+                 success:NO];
+        return;
+    }
+
     NSError *verifyError = nil;
-    BOOL verified = XITForgeFilesAreIdentical(location, destinationURL, &verifyError);
-    if (!verified) { [self showResult:@"El archivo se descargó, pero no quedó verificado en la ruta final." success:NO]; return; }
+    BOOL verified =
+        XITForgeFilesAreIdentical(location, destinationURL, &verifyError);
+
+    if (!verified) {
+        NSString *detail =
+            verifyError.localizedDescription.length > 0
+                ? verifyError.localizedDescription
+                : @"Error de verificación desconocido.";
+        [self showResult:
+            [NSString stringWithFormat:@"VERIFICACIÓN: %@", detail]
+                 success:NO];
+        return;
+    }
     [self showResult:@"Archivo agregado y verificado correctamente." success:YES];
 }
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     [self.activityIndicator stopAnimating];
-    if (error) { [self showResult:@"No se pudo descargar el archivo." success:NO]; }
+    if (error) {
+        NSString *detail =
+            error.localizedDescription.length > 0
+                ? error.localizedDescription
+                : @"Error de red desconocido.";
+
+        [self showResult:
+            [NSString stringWithFormat:@"DESCARGA: %@", detail]
+                 success:NO];
+    }
     [session finishTasksAndInvalidate];
     if (self.downloadSession == session) self.downloadSession = nil;
 }
 
 - (void)showResult:(NSString *)message success:(BOOL)success {
     [self.activityIndicator stopAnimating];
+
+    if (!success) {
+        NSLog(@"[XITFORGE][RESULTADO][ERROR] %@",
+              message.length > 0 ? message : @"Error sin detalle.");
+    }
     if (self.activationInProgress && self.pendingActivationOptions.count > 0) {
         if (!success) {
             [self finishActivationUIWithSuccess:NO message:message];
