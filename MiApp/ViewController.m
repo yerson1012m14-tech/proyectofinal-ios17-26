@@ -14,18 +14,15 @@ static NSString *mcmVirtualRoot(void) {
     return nil;
 }
 
-// ✅ NUEVA FUNCIÓN: Busca directamente en el filesystem usando el metadata plist
 static NSString *containerPath(NSString *bid) {
     if (bid.length == 0) return nil;
     asegurarMotor();
     
-    // Si es la propia app XITFORGE, devolver su contenedor
     NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
     if ([bid isEqualToString:currentBundleId]) {
         return mcmVirtualRoot();
     }
     
-    // Para otras apps, buscar directamente en /var/mobile/Containers/Data/Application/
     NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     
