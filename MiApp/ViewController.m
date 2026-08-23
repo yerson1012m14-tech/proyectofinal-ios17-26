@@ -26,16 +26,39 @@ static NSString *mcmVirtualRoot(void) {
 static NSString *containerPath(NSString *bid) {
     if (bid.length == 0) return nil;
     asegurarMotor();
-    NSString *currentBundleId =
-        [NSBundle mainBundle].bundleIdentifier ?: @"";
-    if (![bid isEqualToString:currentBundleId]) {
-        NSLog(
-            @"XITFORGE Explorer: %@ fuera del sandbox propio; acceso no disponible",
-            bid
-        );
-        return nil;
+    
+    // Si es la propia app XITFORGE, devolver su contenedor
+    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
+    if ([bid isEqualToString:currentBundleId]) {
+        return mcmVirtualRoot();
     }
-    return mcmVirtualRoot();
+    
+    // Para otras apps, buscar en /var/mobile/Containers/Data/Application/
+    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
+    if (!folders) return nil;
+    
+    for (NSString *folder in folders) {
+        if ([folder hasPrefix:@"."]) continue;
+        
+        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
+        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@"com.apple.mobile_container_manager.metadata.plist"];
+        
+        if ([fm fileExistsAtPath:metadataPath]) {
+            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
+            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
+            
+            if ([foundBundleId isEqualToString:bid]) {
+                NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, candidatePath);
+                return candidatePath;
+            }
+        }
+    }
+    
+    NSLog(@"XITFORGE Explorer: No se encontró contenedor para %@", bid);
+    return nil;
 }
 
 static NSString *fmtSize(unsigned long long b) {
