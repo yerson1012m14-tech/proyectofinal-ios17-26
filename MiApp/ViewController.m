@@ -27,22 +27,27 @@ static NSString *containerPath(NSString *bid) {
     NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     
+    // ✅ LOG DE DIAGNÓSTICO
+    BOOL isDir = NO;
+    BOOL exists = [fm fileExistsAtPath:appsRoot isDirectory:&isDir];
+    NSLog(@"XITFORGE DIAG: appsRoot existe=%d isDir=%d", exists, isDir);
+    
     NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
+    NSLog(@"XITFORGE DIAG: folders count=%lu", (unsigned long)folders.count);
+    
     if (!folders) {
-        NSLog(@"XITFORGE Explorer: No se pudo listar %@", appsRoot);
+        NSLog(@"XITFORGE Explorer: No se pudo listar %@ (sandbox NO escapado)", appsRoot);
         return nil;
     }
     
     for (NSString *folder in folders) {
         if ([folder hasPrefix:@"."]) continue;
-        
         NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
         NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"];
         
         if ([fm fileExistsAtPath:metadataPath]) {
             NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
             NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
-            
             if ([foundBundleId isEqualToString:bid]) {
                 NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, candidatePath);
                 return candidatePath;
