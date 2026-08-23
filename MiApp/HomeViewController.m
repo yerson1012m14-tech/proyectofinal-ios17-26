@@ -7,7 +7,6 @@
 #import <errno.h>
 #import <sys/stat.h>
 #import <string.h>
-#import <mach-o/dyld.h>
 
 static UIColor *XITForgeAccentColor(void) {
     return [UIColor colorWithRed:0.95 green:0.10 blue:0.16 alpha:1.0];
@@ -17,11 +16,14 @@ static UIColor *XITForgeAccentDarkColor(void) {
     return [UIColor colorWithRed:0.16 green:0.035 blue:0.045 alpha:1.0];
 }
 
+#pragma mark - XITFORGE Exact File Writer
 static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSError **errorOut) {
     NSString *sourcePath = sourceURL.path;
     NSString *destinationPath = destinationURL.path;
     if (sourcePath.length == 0 || destinationPath.length == 0) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
+        if (errorOut) {
+            *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
+        }
         return NO;
     }
     const char *src = sourcePath.fileSystemRepresentation;
@@ -41,12 +43,14 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
             return NO;
         }
     } else if (errno != ENOENT) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+        int e = errno;
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
         return NO;
     }
     int inFD = open(src, O_RDONLY | O_CLOEXEC);
     if (inFD < 0) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+        int e = errno;
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
         return NO;
     }
     int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
@@ -95,6 +99,7 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
     return YES;
 }
 
+#pragma mark - XITFORGE Exact File Verification
 static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, NSError **errorOut) {
     const char *src = sourceURL.path.fileSystemRepresentation;
     const char *dst = destinationURL.path.fileSystemRepresentation;
@@ -149,84 +154,67 @@ static BOOL XITForgeFilesAreIdentical(NSURL *sourceURL, NSURL *destinationURL, N
     return identical;
 }
 
-static BOOL XITForgeFilzaEngineLoaded(void) {
-    uint32_t count = _dyld_image_count();
-
-    for (uint32_t i = 0; i < count; i++) {
-        const char *imageName = _dyld_get_image_name(i);
-        if (!imageName) continue;
-
-        if (strstr(imageName, "FilzaApplySandboxExt.dylib") != NULL) {
-            return YES;
-        }
-    }
-
-    return NO;
-}
-
-static void XITForgeEnsureEngine(void) {
-    /*
-     * Compatibilidad segura con FilzaJailedDS:
-     * solo comprobamos si el dylib está cargado.
-     *
-     * No invocamos TweakInit, sandbox_escape ni una API privada
-     * para resolver contenedores de otras aplicaciones.
-     */
-    (void)XITForgeFilzaEngineLoaded();
-}
+#pragma mark - XITFORGE Filesystem Engine
+static void XITForgeEnsureEngine(void) {}
 
 static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorOut) {
     if (errorOut) *errorOut = nil;
-
     if (bundleId.length == 0) {
         if (errorOut) *errorOut = @"bundleId vacío";
         return nil;
     }
-
-    XITForgeEnsureEngine();
-
-    NSString *currentBundleId =
-        [NSBundle mainBundle].bundleIdentifier ?: @"";
-
+    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
     if ([bundleId isEqualToString:currentBundleId]) {
-        NSString *homePath =
-            [NSHomeDirectory() stringByStandardizingPath];
-
+        NSString *home = [NSHomeDirectory() stringByStandardizingPath];
         BOOL isDirectory = NO;
-
-        if (![[NSFileManager defaultManager]
-                fileExistsAtPath:homePath
-                     isDirectory:&isDirectory] ||
-            !isDirectory) {
-
-            if (errorOut) {
-                *errorOut =
-                    @"No se pudo resolver el contenedor propio de XITFORGE.";
-            }
-
+        if (![[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] || !isDirectory) {
+            if (errorOut) *errorOut = @"No se pudo resolver el contenedor propio de XITFORGE.";
             return nil;
         }
-
-        return homePath;
+        return home;
     }
-
-    BOOL engineLoaded = XITForgeFilzaEngineLoaded();
-
-    if (errorOut) {
-        if (engineLoaded) {
-            *errorOut =
-                [NSString stringWithFormat:
-                    @"FilzaApplySandboxExt está cargado, pero no expone una "
-                     "API de contenedores compatible para %@.",
-                    bundleId];
-        } else {
-            *errorOut =
-                [NSString stringWithFormat:
-                    @"No hay una ruta autorizada disponible para %@.",
-                    bundleId];
+    @try {
+        Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
+        if (!wsClass || ![wsClass respondsToSelector:@selector(defaultWorkspace)]) {
+            if (errorOut) *errorOut = @"LSApplicationWorkspace no disponible";
+            return nil;
         }
+        id workspace = [wsClass performSelector:@selector(defaultWorkspace)];
+        if (!workspace || ![workspace respondsToSelector:@selector(allApplications)]) {
+            if (errorOut) *errorOut = @"No se pudo obtener el workspace";
+            return nil;
+        }
+        NSArray *allApps = [workspace performSelector:@selector(allApplications)];
+        if (!allApps) {
+            if (errorOut) *errorOut = @"No se pudieron listar las apps";
+            return nil;
+        }
+        for (id proxy in allApps) {
+            @try {
+                if (![proxy respondsToSelector:@selector(applicationIdentifier)]) continue;
+                NSString *appBundleId = [proxy performSelector:@selector(applicationIdentifier)];
+                if (![appBundleId isEqualToString:bundleId]) continue;
+                if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
+                    NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
+                    if (dataContainerURL && dataContainerURL.path) {
+                        NSLog(@"XITFORGE: DataContainer de %@ = %@", bundleId, dataContainerURL.path);
+                        return dataContainerURL.path;
+                    }
+                }
+                if ([proxy respondsToSelector:@selector(containerURL)]) {
+                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
+                    if (containerURL && containerURL.path) {
+                        NSLog(@"XITFORGE: Container de %@ = %@", bundleId, containerURL.path);
+                        return containerURL.path;
+                    }
+                }
+            } @catch (NSException *e) { continue; }
+        }
+    } @catch (NSException *e) {
+        if (errorOut) *errorOut = [NSString stringWithFormat:@"Error: %@", e.reason];
+        return nil;
     }
-
+    if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
     return nil;
 }
 
@@ -267,6 +255,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     return resolved;
 }
 
+#pragma mark - XITFORGE Option Model
 @interface XITForgeOption : NSObject
 @property (nonatomic, strong) NSNumber *optionId;
 @property (nonatomic, copy) NSString *name;
@@ -372,6 +361,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 @end
 
+#pragma mark - Options View Controller
 @interface XITForgeOptionsViewController : UIViewController <UITableViewDataSource, UITableViewDelegate, NSURLSessionDownloadDelegate>
 @property (nonatomic, copy) NSString *game;
 @property (nonatomic, copy) NSString *bundleId;
@@ -1231,7 +1221,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
             if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
-            [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
+            [items addObject:@{"downloadURL": downloadURL, "destinationURL": destinationURL}];
         }
         [self restoreOriginalItems:items index:0];
     });
@@ -1463,6 +1453,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 @end
 
+#pragma mark - HomeViewController
 @interface HomeViewController ()
 @property (nonatomic, strong) UIButton *btnNormal;
 @property (nonatomic, strong) UIButton *btnMax;
