@@ -14,44 +14,45 @@ static NSString *mcmVirtualRoot(void) {
     return nil;
 }
 
+// ✅ CORREGIDO: Busca directamente en el filesystem
+// El dylib FilzaApplySandboxExt.dylib ya escapó el sandbox al cargarse
 static NSString *containerPath(NSString *bid) {
     if (bid.length == 0) return nil;
     asegurarMotor();
+    
     NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
     if ([bid isEqualToString:currentBundleId]) {
         return mcmVirtualRoot();
     }
-    @try {
-        Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
-        if (!wsClass || ![wsClass respondsToSelector:@selector(defaultWorkspace)]) return nil;
-        id workspace = [wsClass performSelector:@selector(defaultWorkspace)];
-        if (!workspace || ![workspace respondsToSelector:@selector(allApplications)]) return nil;
-        NSArray *allApps = [workspace performSelector:@selector(allApplications)];
-        if (!allApps) return nil;
-        for (id proxy in allApps) {
-            @try {
-                if (![proxy respondsToSelector:@selector(applicationIdentifier)]) continue;
-                NSString *appBundleId = [proxy performSelector:@selector(applicationIdentifier)];
-                if (![appBundleId isEqualToString:bid]) continue;
-                if ([proxy respondsToSelector:@selector(dataContainerURL)]) {
-                    NSURL *dataContainerURL = [proxy performSelector:@selector(dataContainerURL)];
-                    if (dataContainerURL && dataContainerURL.path) {
-                        NSLog(@"XITFORGE Explorer: DataContainer de %@ = %@", bid, dataContainerURL.path);
-                        return dataContainerURL.path;
-                    }
-                }
-                if ([proxy respondsToSelector:@selector(containerURL)]) {
-                    NSURL *containerURL = [proxy performSelector:@selector(containerURL)];
-                    if (containerURL && containerURL.path) {
-                        NSLog(@"XITFORGE Explorer: Container de %@ = %@", bid, containerURL.path);
-                        return containerURL.path;
-                    }
-                }
-            } @catch (NSException *e) { continue; }
-        }
-    } @catch (NSException *e) {
-        NSLog(@"XITFORGE Explorer: Error al obtener contenedor de %@: %@", bid, e.reason);
+    
+    // Buscar directamente en /var/mobile/Containers/Data/Application/
+    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
+    if (!folders) {
+        NSLog(@"XITFORGE Explorer: No se pudo listar %@", appsRoot);
+        return nil;
     }
+    
+    for (NSString *folder in folders) {
+        if ([folder hasPrefix:@"."]) continue;
+        
+        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
+        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"];
+        
+        if ([fm fileExistsAtPath:metadataPath]) {
+            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
+            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
+            
+            if ([foundBundleId isEqualToString:bid]) {
+                NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, candidatePath);
+                return candidatePath;
+            }
+        }
+    }
+    
+    NSLog(@"XITFORGE Explorer: No se encontró contenedor para %@", bid);
     return nil;
 }
 
