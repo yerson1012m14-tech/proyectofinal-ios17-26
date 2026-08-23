@@ -22,9 +22,7 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
     NSString *sourcePath = sourceURL.path;
     NSString *destinationPath = destinationURL.path;
     if (sourcePath.length == 0 || destinationPath.length == 0) {
-        if (errorOut) {
-            *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
-        }
+        if (errorOut) *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
         return NO;
     }
     const char *src = sourcePath.fileSystemRepresentation;
@@ -170,7 +168,6 @@ static void XITForgeEnsureEngine(void) {
     (void)XITForgeFilzaEngineLoaded();
 }
 
-// ✅ CORREGIDO: Busca directamente en el filesystem (el dylib ya escapó el sandbox)
 static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorOut) {
     if (errorOut) *errorOut = nil;
     if (bundleId.length == 0) {
@@ -191,30 +188,24 @@ static NSString *XITForgeDataContainerPath(NSString *bundleId, NSString **errorO
     
     NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
-    
     NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
     if (!folders) {
         if (errorOut) *errorOut = @"No se pudo listar los contenedores";
         return nil;
     }
-    
     for (NSString *folder in folders) {
         if ([folder hasPrefix:@"."]) continue;
-        
         NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
         NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"];
-        
         if ([fm fileExistsAtPath:metadataPath]) {
             NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
             NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
-            
             if ([foundBundleId isEqualToString:bundleId]) {
                 NSLog(@"XITFORGE: Contenedor encontrado para %@ = %@", bundleId, candidatePath);
                 return candidatePath;
             }
         }
     }
-    
     if (errorOut) *errorOut = [NSString stringWithFormat:@"No se encontró el contenedor de %@", bundleId];
     return nil;
 }
@@ -417,7 +408,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     if (option.optionId != nil) return [NSString stringWithFormat:@"id:%@", option.optionId.stringValue];
     NSString *route = option.route ?: @"";
     NSString *fileName = option.fileName ?: @"";
-    return [NSString stringWithFormat:@"file:%@|%@", route, fileName];
+    NSString *key = [NSString stringWithFormat:@"file:%@|%@", route, fileName];
+    NSLog(@"XITFORGE DEACT: activationKeyForOption '%@' -> '%@'", option.name, key);
+    return key;
 }
 
 - (void)loadPersistedActiveOptions {
@@ -451,128 +444,131 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 
 - (NSArray<XITForgeOption *> *)activeOptionsForDeactivation {
     NSMutableArray<XITForgeOption *> *active = [NSMutableArray array];
-
     for (XITForgeOption *option in self.options) {
         if ([self isOptionActivated:option]) {
             [active addObject:option];
         }
     }
-
     return [active copy];
 }
 
+// ✅ CORREGIDO: Genera key para el diccionario original del servidor
 - (NSString *)activationKeyForOriginalDictionary:(NSDictionary *)raw {
-    NSNumber *itemId =
-        [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
-
+    NSNumber *itemId = [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
     if (itemId != nil) {
-        return [NSString stringWithFormat:@"id:%@", itemId.stringValue];
+        NSString *key = [NSString stringWithFormat:@"id:%@", itemId.stringValue];
+        NSLog(@"XITFORGE DEACT: Key original por id: '%@'", key);
+        return key;
     }
-
-    NSString *route =
-        [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : @"";
-
-    NSString *fileName =
-        [raw[@"fileName"] isKindOfClass:[NSString class]]
-            ? raw[@"fileName"]
-            : ([raw[@"file"] isKindOfClass:[NSString class]] ? raw[@"file"] : @"");
-
-    return [NSString stringWithFormat:@"file:%@|%@", route, fileName];
+    NSString *route = [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : @"";
+    NSString *fileName = nil;
+    if ([raw[@"fileName"] isKindOfClass:[NSString class]]) {
+        fileName = raw[@"fileName"];
+    } else if ([raw[@"file"] isKindOfClass:[NSString class]]) {
+        fileName = raw[@"file"];
+    } else {
+        fileName = @"";
+    }
+    NSString *key = [NSString stringWithFormat:@"file:%@|%@", route, fileName];
+    NSLog(@"XITFORGE DEACT: Key original por archivo: '%@' (route='%@', file='%@')", key, route, fileName);
+    return key;
 }
 
+// ✅ CORREGIDO: Comparación flexible de keys
 - (BOOL)originalDictionaryMatchesCurrentDeactivation:(NSDictionary *)raw {
     if (self.deactivationTargetsAll) return YES;
-
+    
     NSString *key = [self activationKeyForOriginalDictionary:raw];
+    NSLog(@"XITFORGE DEACT: Comparando '%@' contra targets=%@", key, self.deactivationTargetKeys);
+    
     if (key.length == 0) return NO;
-
-    return [self.deactivationTargetKeys containsObject:key];
+    
+    // Comparación exacta primero
+    if ([self.deactivationTargetKeys containsObject:key]) return YES;
+    
+    // Comparación flexible: extraer fileName y comparar por partes
+    for (NSString *targetKey in self.deactivationTargetKeys) {
+        NSArray *targetParts = [targetKey componentsSeparatedByString:@"|"];
+        NSArray *keyParts = [key componentsSeparatedByString:@"|"];
+        
+        if (targetParts.count == 2 && keyParts.count == 2) {
+            NSString *targetFile = targetParts[1];
+            NSString *keyFile = keyParts[1];
+            if ([targetFile caseInsensitiveCompare:keyFile] == NSOrderedSame) {
+                NSLog(@"XITFORGE DEACT: Coincidencia flexible por fileName: %@", keyFile);
+                return YES;
+            }
+        }
+    }
+    
+    NSLog(@"XITFORGE DEACT: No se encontró coincidencia para '%@'", key);
+    return NO;
 }
 
+// ✅ CORREGIDO: Prepara desactivación individual con logs
 - (void)prepareDeactivationForOption:(XITForgeOption *)option {
     if (!option) return;
-
     NSString *key = [self activationKeyForOption:option];
+    NSLog(@"XITFORGE DEACT: Preparando desactivación de '%@' con key='%@'", option.name, key);
     if (key.length == 0) return;
-
     self.deactivationTargetsAll = NO;
     self.deactivationTargetKeys = [NSSet setWithObject:key];
-
+    NSLog(@"XITFORGE DEACT: deactivationTargetKeys = %@", self.deactivationTargetKeys);
     [self deactivateAllOptions];
 }
 
 - (void)prepareDeactivationForAllActiveOptions {
     NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
     NSMutableSet<NSString *> *keys = [NSMutableSet set];
-
     for (XITForgeOption *option in active) {
         NSString *key = [self activationKeyForOption:option];
         if (key.length > 0) [keys addObject:key];
     }
-
+    NSLog(@"XITFORGE DEACT: Desactivar TODOS, keys=%@", keys);
     self.deactivationTargetsAll = YES;
     self.deactivationTargetKeys = [keys copy];
-
     [self deactivateAllOptions];
 }
 
 - (void)showDeactivationChooser {
     if (self.activationInProgress || self.deactivationInProgress) return;
-
     NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
-
     if (active.count == 0) {
         self.selectionHintLabel.text = @"NO HAY OPCIONES ACTIVAS";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
         return;
     }
-
-    UIAlertController *sheet =
-        [UIAlertController alertControllerWithTitle:@"¿QUÉ DESEA DESACTIVAR?"
-                                            message:@"Selecciona una opción activa."
-                                     preferredStyle:UIAlertControllerStyleActionSheet];
-
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"¿QUÉ DESEA DESACTIVAR?"
+        message:@"Selecciona una opción activa."
+        preferredStyle:UIAlertControllerStyleActionSheet];
     __weak typeof(self) weakSelf = self;
-
     for (XITForgeOption *option in active) {
         NSString *title = option.name.length > 0 ? option.name : @"OPCIÓN ACTIVA";
-
-        UIAlertAction *action =
-            [UIAlertAction actionWithTitle:title
-                                     style:UIAlertActionStyleDefault
-                                   handler:^(__unused UIAlertAction * _Nonnull action) {
+        UIAlertAction *action = [UIAlertAction actionWithTitle:title
+            style:UIAlertActionStyleDefault
+            handler:^(__unused UIAlertAction * _Nonnull action) {
                 __strong typeof(weakSelf) strongSelf = weakSelf;
                 if (!strongSelf) return;
                 [strongSelf prepareDeactivationForOption:option];
             }];
-
         [sheet addAction:action];
     }
-
     if (active.count > 1) {
-        UIAlertAction *all =
-            [UIAlertAction actionWithTitle:@"DESACTIVAR TODOS"
-                                     style:UIAlertActionStyleDestructive
-                                   handler:^(__unused UIAlertAction * _Nonnull action) {
+        UIAlertAction *all = [UIAlertAction actionWithTitle:@"DESACTIVAR TODOS"
+            style:UIAlertActionStyleDestructive
+            handler:^(__unused UIAlertAction * _Nonnull action) {
                 __strong typeof(weakSelf) strongSelf = weakSelf;
                 if (!strongSelf) return;
                 [strongSelf prepareDeactivationForAllActiveOptions];
             }];
-
         [sheet addAction:all];
     }
-
-    [sheet addAction:
-        [UIAlertAction actionWithTitle:@"CANCELAR"
-                                 style:UIAlertActionStyleCancel
-                               handler:nil]];
-
+    [sheet addAction:[UIAlertAction actionWithTitle:@"CANCELAR" style:UIAlertActionStyleCancel handler:nil]];
     UIPopoverPresentationController *popover = sheet.popoverPresentationController;
     if (popover) {
         popover.sourceView = self.deactivateButton;
         popover.sourceRect = self.deactivateButton.bounds;
     }
-
     [self presentViewController:sheet animated:YES completion:nil];
 }
 
@@ -1299,6 +1295,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [self.activityIndicator stopAnimating];
 }
 
+// ✅ CORREGIDO: Desactivación individual o total según deactivationTargetsAll
 - (void)finishDeactivationUIWithSuccess:(BOOL)success noOriginals:(BOOL)noOriginals {
     self.deactivationInProgress = NO;
     self.tableView.userInteractionEnabled = YES;
@@ -1308,7 +1305,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     if (noOriginals) {
         self.deactivationTargetKeys = nil;
         self.deactivationTargetsAll = NO;
-
         [self updateActivateButtonForCurrentSelection];
         self.selectionHintLabel.text = @"SIN ORIGINALES CONFIGURADOS";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
@@ -1317,16 +1313,16 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     if (success) {
         if (self.deactivationTargetsAll) {
             [self clearActivatedOptions];
+            NSLog(@"XITFORGE DEACT: Todas las opciones desactivadas");
         } else {
             for (NSString *key in self.deactivationTargetKeys) {
                 [self.activeOptionKeys removeObject:key];
+                NSLog(@"XITFORGE DEACT: Opción desactivada con key='%@'", key);
             }
             [self persistActiveOptions];
         }
-
         self.deactivationTargetKeys = nil;
         self.deactivationTargetsAll = NO;
-
         self.selectionHintLabel.text = @"✓  DESACTIVADO";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.92 alpha:1.0];
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
@@ -1334,17 +1330,21 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     } else {
         self.deactivationTargetKeys = nil;
         self.deactivationTargetsAll = NO;
-
         self.selectionHintLabel.text = @"NO SE PUDO DESACTIVAR";
         self.selectionHintLabel.textColor = XITForgeAccentColor();
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeError];
     }
+    [self.tableView reloadData];
     [self updateActivateButtonForCurrentSelection];
 }
 
+// ✅ CORREGIDO: Con logs de diagnóstico
 - (void)processOriginalManifestDictionary:(NSDictionary *)dictionary originals:(NSArray *)rawOriginals legacy:(BOOL)legacy {
+    NSLog(@"XITFORGE DEACT: processOriginalManifest con %lu originales, legacy=%d", (unsigned long)rawOriginals.count, legacy);
+    
     if (rawOriginals.count == 0) {
+        NSLog(@"XITFORGE DEACT: No hay originales en el servidor");
         dispatch_async(dispatch_get_main_queue(), ^{ [self finishDeactivationUIWithSuccess:YES noOriginals:YES]; });
         return;
     }
@@ -1356,13 +1356,11 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
                 [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
                 return;
             }
-
             NSDictionary *raw = (NSDictionary *)rawItem;
-
             if (![self originalDictionaryMatchesCurrentDeactivation:raw]) {
+                NSLog(@"XITFORGE DEACT: Original no coincide con la desactivación actual, saltando");
                 continue;
             }
-
             XITForgeOption *option = [[XITForgeOption alloc] init];
             option.bundleId = [raw[@"bundleId"] isKindOfClass:[NSString class]] ? raw[@"bundleId"] : responseBundleId;
             option.route = [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : nil;
@@ -1372,18 +1370,27 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
                 NSNumber *itemId = [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
                 if (itemId.longLongValue > 0) option.originalFileUrl = legacy ? [NSString stringWithFormat:@"/api/app/options/%@/original-file", itemId] : [NSString stringWithFormat:@"/api/app/originals/%@/file", itemId];
             }
-            if (option.route.length == 0 || option.fileName.length == 0 || option.originalFileUrl.length == 0) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
+            if (option.route.length == 0 || option.fileName.length == 0 || option.originalFileUrl.length == 0) {
+                NSLog(@"XITFORGE DEACT: Original incompleto: route='%@' fileName='%@' url='%@'", option.route, option.fileName, option.originalFileUrl);
+                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
+                return;
+            }
             NSString *resolveError = nil;
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
-            if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
+            if (!destinationURL || !downloadURL) {
+                NSLog(@"XITFORGE DEACT: No se pudo resolver destino o URL: %@", resolveError);
+                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
+                return;
+            }
             [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
         }
         if (items.count == 0) {
+            NSLog(@"XITFORGE DEACT: Ningún original coincidió con la desactivación solicitada");
             [self finishDeactivationUIWithSuccess:YES noOriginals:YES];
             return;
         }
-
+        NSLog(@"XITFORGE DEACT: %lu originales coincidentes, iniciando restauración", (unsigned long)items.count);
         [self restoreOriginalItems:items index:0];
     });
 }
@@ -1424,6 +1431,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             if (!hasOriginal && originalURL.length == 0) continue;
             [legacyOriginals addObject:raw];
         }
+        NSLog(@"XITFORGE DEACT: Legacy fallback encontró %lu originales", (unsigned long)legacyOriginals.count);
         [self processOriginalManifestDictionary:dictionary originals:legacyOriginals legacy:YES];
     }];
     [task resume];
