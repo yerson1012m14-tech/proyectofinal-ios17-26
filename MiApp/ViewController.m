@@ -1,54 +1,80 @@
 #import "ViewController.h"
 #import <dlfcn.h>
 
+static NSString *XITForgeLastContainerError = nil;
+
 static void asegurarMotor(void) {
+    /*
+     * El motor, si está presente en la app, administra su propio constructor.
+     * El explorador no intenta inicializar APIs privadas desde aquí.
+     */
 }
 
 static NSString *mcmVirtualRoot(void) {
+    XITForgeLastContainerError = nil;
     asegurarMotor();
-    NSString *home = [NSHomeDirectory() stringByStandardizingPath];
-    BOOL isDirectory = NO;
-    if ([[NSFileManager defaultManager] fileExistsAtPath:home isDirectory:&isDirectory] && isDirectory) {
-        return home;
+
+    NSString *home = [[NSHomeDirectory() ?: @""] stringByStandardizingPath];
+    if (home.length == 0) {
+        XITForgeLastContainerError = @"NSHomeDirectory() devolvió una ruta vacía.";
+        return nil;
     }
-    return nil;
+
+    BOOL isDirectory = NO;
+    BOOL exists =
+        [[NSFileManager defaultManager]
+            fileExistsAtPath:home
+                 isDirectory:&isDirectory];
+
+    if (!exists || !isDirectory) {
+        XITForgeLastContainerError =
+            [NSString stringWithFormat:
+                @"El contenedor propio de XITFORGE no está disponible en %@.",
+                home];
+        return nil;
+    }
+
+    return home;
 }
 
 static NSString *containerPath(NSString *bid) {
-    if (bid.length == 0) return nil;
+    XITForgeLastContainerError = nil;
+
+    NSString *requested =
+        [bid stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+    if (requested.length == 0) {
+        XITForgeLastContainerError = @"Bundle ID vacío.";
+        return nil;
+    }
+
     asegurarMotor();
-    
-    // Si es la propia app XITFORGE, devolver su contenedor
-    NSString *currentBundleId = [NSBundle mainBundle].bundleIdentifier ?: @"";
-    if ([bid isEqualToString:currentBundleId]) {
+
+    NSString *currentBundleId =
+        [NSBundle mainBundle].bundleIdentifier ?: @"";
+
+    BOOL ownContainer =
+        [requested isEqualToString:currentBundleId] ||
+        [requested caseInsensitiveCompare:@"self"] == NSOrderedSame ||
+        [requested caseInsensitiveCompare:@"xitforge"] == NSOrderedSame;
+
+    if (ownContainer) {
         return mcmVirtualRoot();
     }
-    
-    // Para otras apps, buscar directamente en el filesystem
-    NSString *appsRoot = @"/var/mobile/Containers/Data/Application";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    
-    NSArray<NSString *> *folders = [fm contentsOfDirectoryAtPath:appsRoot error:nil];
-    if (!folders) return nil;
-    
-    for (NSString *folder in folders) {
-        if ([folder hasPrefix:@"."]) continue;
-        
-        NSString *candidatePath = [appsRoot stringByAppendingPathComponent:folder];
-        NSString *metadataPath = [candidatePath stringByAppendingPathComponent:@"com.apple.mobile_container_manager.metadata.plist"];
-        
-        if ([fm fileExistsAtPath:metadataPath]) {
-            NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:metadataPath];
-            NSString *foundBundleId = metadata[@"MCMMetadataIdentifier"];
-            
-            if ([foundBundleId isEqualToString:bid]) {
-                NSLog(@"XITFORGE Explorer: Contenedor de %@ = %@", bid, candidatePath);
-                return candidatePath;
-            }
-        }
-    }
-    
-    NSLog(@"XITFORGE Explorer: No se encontró contenedor para %@", bid);
+
+    /*
+     * No se escanea /var/mobile/Containers/Data/Application:
+     * una app normal puede ver nombres de otras apps mediante APIs del sistema
+     * pero eso no implica que pueda leer sus contenedores.
+     */
+    XITForgeLastContainerError =
+        [NSString stringWithFormat:
+            @"%@ puede estar instalada, pero iOS no devolvió una ruta de "
+             "contenedor accesible para XITFORGE.",
+            requested];
+
+    NSLog(@"XITFORGE Explorer: %@", XITForgeLastContainerError);
     return nil;
 }
 
@@ -238,7 +264,7 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 60)];
     header.backgroundColor = colorFondo();
     self.campo = [[UITextField alloc] initWithFrame:CGRectMake(12, 10, header.bounds.size.width - 24, 40)];
-    self.campo.placeholder = @"bundle id + return";
+    self.campo.placeholder = @"XITFORGE / self / bundle id propio";
     self.campo.backgroundColor = colorCard();
     self.campo.layer.cornerRadius = 12;
     self.campo.layer.borderWidth = 1;
@@ -263,7 +289,7 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     self.vacioLabel.textAlignment = NSTextAlignmentCenter;
     self.vacioLabel.textColor = textoGris();
     self.vacioLabel.font = [UIFont fontWithName:@"Menlo" size:12];
-    self.vacioLabel.text = @"No se detectaron apps.\nEscribe arriba el bundle ID\nde una app instalada.";
+    self.vacioLabel.text = @"No hay otros contenedores accesibles.\nAbre XITFORGE o escribe self.";
     self.vacioLabel.hidden = YES;
     [self.view addSubview:self.vacioLabel];
     [self cargarApps];
@@ -277,10 +303,33 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
 - (void)irARaiz {
     @try {
         NSString *root = mcmVirtualRoot();
-        if (!root.length) return;
+
+        if (!root.length) {
+            NSString *detail =
+                XITForgeLastContainerError.length > 0
+                    ? XITForgeLastContainerError
+                    : @"No se pudo obtener el contenedor de XITFORGE.";
+
+            UIAlertController *a =
+                [UIAlertController
+                    alertControllerWithTitle:@"Ruta no disponible"
+                    message:detail
+                    preferredStyle:UIAlertControllerStyleAlert];
+
+            [a addAction:
+                [UIAlertAction
+                    actionWithTitle:@"OK"
+                    style:UIAlertActionStyleDefault
+                    handler:nil]];
+
+            [self presentViewController:a animated:YES completion:nil];
+            return;
+        }
+
         FileBrowserVC *fb = [FileBrowserVC new];
         fb.ruta = root;
         [self.navigationController pushViewController:fb animated:YES];
+
     } @catch (NSException *exception) {
         NSLog(@"Error al ir a raíz: %@", exception);
     }
@@ -288,36 +337,25 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
 
 - (void)cargarApps {
     @try {
-        NSMutableOrderedSet *set = [NSMutableOrderedSet new];
-        Class ws = NSClassFromString(@"LSApplicationWorkspace");
-        if (ws && [ws respondsToSelector:@selector(defaultWorkspace)]) {
-            id workspace = [ws performSelector:@selector(defaultWorkspace)];
-            if (workspace && [workspace respondsToSelector:@selector(allApplications)]) {
-                NSArray *all = [workspace performSelector:@selector(allApplications)];
-                for (id proxy in all) {
-                    @try {
-                        if ([proxy respondsToSelector:@selector(applicationIdentifier)]) {
-                            NSString *bid = [proxy performSelector:@selector(applicationIdentifier)];
-                            if (bid && ![bid hasPrefix:@"com.apple."]) [set addObject:bid];
-                        }
-                    } @catch (NSException *e) {}
-                }
-            }
-        }
-        NSString *root = mcmVirtualRoot();
-        if (root.length > 0) {
-            NSString *appData = [root stringByAppendingPathComponent:@"[MHA-C2] App Data"];
-            NSArray<NSString *> *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:appData error:nil];
-            for (NSString *bid in entries ?: @[]) {
-                if (bid.length > 0 && ![bid hasPrefix:@"."]) [set addObject:bid];
-            }
-        }
         [self.apps removeAllObjects];
-        [self.apps addObjectsFromArray:[set array]];
-        [self.apps sortUsingSelector:@selector(localizedStandardCompare:)];
-        self.title = [NSString stringWithFormat:@"Explorar (%lu)", (unsigned long)self.apps.count];
+
+        NSString *currentBundleId =
+            [NSBundle mainBundle].bundleIdentifier ?: @"";
+
+        NSString *home = mcmVirtualRoot();
+
+        if (currentBundleId.length > 0 && home.length > 0) {
+            [self.apps addObject:currentBundleId];
+        }
+
+        self.title =
+            [NSString stringWithFormat:
+                @"Explorar (%lu)",
+                (unsigned long)self.apps.count];
+
         self.vacioLabel.hidden = (self.apps.count != 0);
         [self.tv reloadData];
+
     } @catch (NSException *exception) {
         NSLog(@"Error al cargar apps: %@", exception);
     }
@@ -343,7 +381,7 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
     c.textLabel.text = self.apps[ip.row];
     c.textLabel.textColor = acento();
     c.textLabel.font = [UIFont fontWithName:@"Menlo" size:13];
-    c.detailTextLabel.text = @"solo lectura";
+    c.detailTextLabel.text = @"contenedor propio · solo lectura";
     c.detailTextLabel.textColor = textoGris();
     c.detailTextLabel.font = [UIFont fontWithName:@"Menlo" size:10];
     ponerIcono(c, @"app.fill", acento());
@@ -366,7 +404,18 @@ static UIColor *textoGris(void) { return [UIColor colorWithWhite:0.50 alpha:1.0]
         NSString *p = nil;
         @try { p = containerPath(bid); } @catch (NSException *e) { p = nil; }
         if (!p) {
-            UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Sin contenedor" message:[NSString stringWithFormat:@"%@ no devolvió ruta (no instalada?)", bid] preferredStyle:UIAlertControllerStyleAlert];
+            NSString *detail =
+                XITForgeLastContainerError.length > 0
+                    ? XITForgeLastContainerError
+                    : [NSString stringWithFormat:
+                        @"No se pudo resolver una ruta para %@.",
+                        bid];
+
+            UIAlertController *a =
+                [UIAlertController
+                    alertControllerWithTitle:@"Ruta no disponible"
+                    message:detail
+                    preferredStyle:UIAlertControllerStyleAlert];
             [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:a animated:YES completion:nil];
             return;
