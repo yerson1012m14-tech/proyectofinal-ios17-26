@@ -22,252 +22,887 @@ static BOOL XITForgeFilzaEngineLoaded(void) {
     return NO;
 }
 
+
 @interface AppDelegate ()
+
 @property (nonatomic, strong) UIWindow *lockWindow;
 @property (nonatomic, strong) UITabBarController *mainTabBar;
 @property (nonatomic, strong) UIWindow *versionWindow;
 @property (nonatomic, assign) BOOL versionCheckInProgress;
 @property (nonatomic, assign) BOOL initialVersionGateCompleted;
+@property (nonatomic, strong) NSTimer *licenseRecheckTimer;
+@property (nonatomic, assign) BOOL licenseRecheckInProgress;
+@property (nonatomic, copy) NSString *lastExpiryWarningDate;
+@property (nonatomic, assign) BOOL xfCleanupInProgress;
+// Si se introduce una key nueva durante una restauración, no descartarla.
+@property (nonatomic, assign) BOOL xfLoginValidatedDuringCleanup;
+
 @end
 
 @implementation AppDelegate
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+#pragma mark - Application
+
+- (BOOL)application:(UIApplication *)application
+    didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+
+    // Preserve iOS 17-26 engine detection without changing the engine itself.
     BOOL filzaEngineLoaded = XITForgeFilzaEngineLoaded();
-    [[NSUserDefaults standardUserDefaults] setBool:filzaEngineLoaded forKey:@"XITForgeFilzaEngineLoaded"];
-    
-    UIColor *acento = [UIColor colorWithRed:0.2 green:1.0 blue:0.5 alpha:1.0];
-    
-    UINavigationBarAppearance *ap = [[UINavigationBarAppearance alloc] init];
+    [[NSUserDefaults standardUserDefaults] setBool:filzaEngineLoaded
+                                              forKey:@"XITForgeFilzaEngineLoaded"];
+
+    UIColor *acento =
+        [UIColor colorWithRed:0.2
+                        green:1.0
+                         blue:0.5
+                        alpha:1.0];
+
+    /*
+     * =========================================================
+     * NAVIGATION BAR
+     * =========================================================
+     */
+
+    UINavigationBarAppearance *ap =
+        [[UINavigationBarAppearance alloc] init];
+
     [ap configureWithOpaqueBackground];
-    ap.backgroundColor = [UIColor blackColor];
-    ap.shadowColor = [UIColor colorWithWhite:0.25 alpha:1.0];
+
+    ap.backgroundColor =
+        [UIColor blackColor];
+
+    ap.shadowColor =
+        [UIColor colorWithWhite:0.25 alpha:1.0];
+
     ap.titleTextAttributes = @{
         NSForegroundColorAttributeName: acento,
-        NSFontAttributeName: [UIFont fontWithName:@"Menlo-Bold" size:17.0]
+        NSFontAttributeName:
+            [UIFont fontWithName:@"Menlo-Bold" size:17.0]
     };
-    [[UINavigationBar appearance] setStandardAppearance:ap];
-    [[UINavigationBar appearance] setScrollEdgeAppearance:ap];
-    [[UINavigationBar appearance] setTintColor:acento];
-    
-    UITabBarAppearance *tabAppearance = [[UITabBarAppearance alloc] init];
+
+    [[UINavigationBar appearance]
+        setStandardAppearance:ap];
+
+    [[UINavigationBar appearance]
+        setScrollEdgeAppearance:ap];
+
+    [[UINavigationBar appearance]
+        setTintColor:acento];
+
+    /*
+     * =========================================================
+     * TAB BAR
+     * =========================================================
+     */
+
+    UITabBarAppearance *tabAppearance =
+        [[UITabBarAppearance alloc] init];
+
     [tabAppearance configureWithOpaqueBackground];
-    tabAppearance.backgroundColor = [UIColor blackColor];
-    [[UITabBar appearance] setStandardAppearance:tabAppearance];
-    [[UITabBar appearance] setScrollEdgeAppearance:tabAppearance];
-    [[UITabBar appearance] setTintColor:acento];
-    [[UITabBar appearance] setUnselectedItemTintColor:[UIColor grayColor]];
-    
-    HomeViewController *homeVC = [[HomeViewController alloc] init];
-    UINavigationController *homeNav = [[UINavigationController alloc] initWithRootViewController:homeVC];
-    homeNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Inicio" image:[UIImage systemImageNamed:@"house.fill"] tag:0];
-    
-    ViewController *explorerVC = [[ViewController alloc] init];
-    UINavigationController *explorerNav = [[UINavigationController alloc] initWithRootViewController:explorerVC];
-    explorerNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Explorar" image:[UIImage systemImageNamed:@"magnifyingglass"] tag:1];
-    
-    MainSettingsViewController *settingsVC = [[MainSettingsViewController alloc] init];
-    UINavigationController *settingsNav = [[UINavigationController alloc] initWithRootViewController:settingsVC];
-    settingsNav.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"Ajustes" image:[UIImage systemImageNamed:@"gearshape.fill"] tag:2];
-    
-    UIColor *settingsRed = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:1.0];
-    UINavigationBarAppearance *settingsAppearance = [[UINavigationBarAppearance alloc] init];
+
+    tabAppearance.backgroundColor =
+        [UIColor blackColor];
+
+    [[UITabBar appearance]
+        setStandardAppearance:tabAppearance];
+
+    [[UITabBar appearance]
+        setScrollEdgeAppearance:tabAppearance];
+
+    // Los dos botones de la barra INFERIOR se muestran rojos al seleccionarse.
+    UIColor *tabRed = [UIColor colorWithRed:0.95 green:0.08 blue:0.10 alpha:1.0];
+    tabAppearance.stackedLayoutAppearance.selected.iconColor = tabRed;
+    tabAppearance.stackedLayoutAppearance.selected.titleTextAttributes =
+        @{ NSForegroundColorAttributeName: tabRed };
+    tabAppearance.inlineLayoutAppearance.selected.iconColor = tabRed;
+    tabAppearance.inlineLayoutAppearance.selected.titleTextAttributes =
+        @{ NSForegroundColorAttributeName: tabRed };
+    tabAppearance.compactInlineLayoutAppearance.selected.iconColor = tabRed;
+    tabAppearance.compactInlineLayoutAppearance.selected.titleTextAttributes =
+        @{ NSForegroundColorAttributeName: tabRed };
+    [[UITabBar appearance] setTintColor:tabRed];
+
+    [[UITabBar appearance]
+        setUnselectedItemTintColor:[UIColor grayColor]];
+
+    /*
+     * =========================================================
+     * HOME
+     * =========================================================
+     */
+
+    HomeViewController *homeVC =
+        [[HomeViewController alloc] init];
+
+    UINavigationController *homeNav =
+        [[UINavigationController alloc]
+            initWithRootViewController:homeVC];
+
+    homeNav.tabBarItem =
+        [[UITabBarItem alloc]
+            initWithTitle:@"Inicio"
+                      image:[UIImage systemImageNamed:@"house.fill"]
+                        tag:0];
+
+    /*
+     * =========================================================
+     * EXPLORAR
+     * =========================================================
+     */
+
+    ViewController *explorerVC =
+        [[ViewController alloc] init];
+
+    UINavigationController *explorerNav =
+        [[UINavigationController alloc]
+            initWithRootViewController:explorerVC];
+
+    explorerNav.tabBarItem =
+        [[UITabBarItem alloc]
+            initWithTitle:@"Explorar"
+                      image:[UIImage systemImageNamed:@"magnifyingglass"]
+                        tag:1];
+
+    /*
+     * =========================================================
+     * AJUSTES
+     * =========================================================
+     */
+
+    MainSettingsViewController *settingsVC =
+        [[MainSettingsViewController alloc] init];
+
+    UINavigationController *settingsNav =
+        [[UINavigationController alloc]
+            initWithRootViewController:settingsVC];
+
+    settingsNav.tabBarItem =
+        [[UITabBarItem alloc]
+            initWithTitle:@"Ajustes"
+                      image:[UIImage systemImageNamed:@"gearshape.fill"]
+                        tag:2];
+
+    /*
+     * Solo CONFIGURACIÓN usa título rojo arriba.
+     * No cambia el color de Inicio ni el resto de la interfaz.
+     */
+    UIColor *settingsRed =
+        [UIColor colorWithRed:0.95
+                        green:0.08
+                         blue:0.10
+                        alpha:1.0];
+
+    UINavigationBarAppearance *settingsAppearance =
+        [[UINavigationBarAppearance alloc] init];
+
     [settingsAppearance configureWithOpaqueBackground];
-    settingsAppearance.backgroundColor = [UIColor blackColor];
-    settingsAppearance.shadowColor = [UIColor colorWithWhite:0.25 alpha:1.0];
-    settingsAppearance.titleTextAttributes = @{
+
+    settingsAppearance.backgroundColor =
+        [UIColor blackColor];
+
+    settingsAppearance.shadowColor =
+        [UIColor colorWithWhite:0.25 alpha:1.0];
+
+    NSDictionary *settingsTitleAttributes = @{
         NSForegroundColorAttributeName: settingsRed,
-        NSFontAttributeName: [UIFont fontWithName:@"Menlo-Bold" size:17.0]
+        NSFontAttributeName:
+            [UIFont fontWithName:@"Menlo-Bold" size:17.0]
     };
-    settingsAppearance.largeTitleTextAttributes = @{
-        NSForegroundColorAttributeName: settingsRed,
-        NSFontAttributeName: [UIFont boldSystemFontOfSize:32.0]
-    };
-    settingsNav.navigationBar.standardAppearance = settingsAppearance;
-    settingsNav.navigationBar.scrollEdgeAppearance = settingsAppearance;
-    settingsNav.navigationBar.compactAppearance = settingsAppearance;
-    settingsNav.navigationBar.tintColor = settingsRed;
-    
-    self.mainTabBar = [[UITabBarController alloc] init];
-    self.mainTabBar.viewControllers = @[homeNav, settingsNav];
+
+    settingsAppearance.titleTextAttributes =
+        settingsTitleAttributes;
+
+    settingsAppearance.largeTitleTextAttributes =
+        @{
+            NSForegroundColorAttributeName: settingsRed,
+            NSFontAttributeName:
+                [UIFont boldSystemFontOfSize:32.0]
+        };
+
+    settingsNav.navigationBar.standardAppearance =
+        settingsAppearance;
+
+    settingsNav.navigationBar.scrollEdgeAppearance =
+        settingsAppearance;
+
+    settingsNav.navigationBar.compactAppearance =
+        settingsAppearance;
+
+    settingsNav.navigationBar.tintColor =
+        settingsRed;
+
+    /*
+     * =========================================================
+     * TAB BAR PRINCIPAL
+     * =========================================================
+     */
+
+    self.mainTabBar =
+        [[UITabBarController alloc] init];
+
+    /*
+     * EXPLORAR queda creado arriba y su código NO se borra.
+     * Simplemente no lo incluimos por ahora en las pestañas visibles.
+     * Para mostrarlo otra vez, basta con volver a agregar explorerNav
+     * a este arreglo.
+     */
+    self.mainTabBar.viewControllers =
+        @[
+            homeNav,
+            settingsNav
+        ];
+
     self.mainTabBar.selectedIndex = 0;
-    
-    self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    UIViewController *versionGatePlaceholder = [[UIViewController alloc] init];
-    versionGatePlaceholder.view.backgroundColor = [UIColor blackColor];
-    self.window.rootViewController = versionGatePlaceholder;
+    self.mainTabBar.tabBar.standardAppearance = tabAppearance;
+    self.mainTabBar.tabBar.scrollEdgeAppearance = tabAppearance;
+    self.mainTabBar.tabBar.tintColor = tabRed;
+
+    /*
+     * =========================================================
+     * WINDOW PRINCIPAL
+     * =========================================================
+     */
+
+    self.window =
+        [[UIWindow alloc]
+            initWithFrame:[UIScreen mainScreen].bounds];
+
+    /*
+     * Mientras se verifica la versión, mostramos únicamente
+     * un fondo negro. Así NO aparece por un instante ni el Home,
+     * ni el login, ni la pantalla de "Verificando versión".
+     */
+    UIViewController *versionGatePlaceholder =
+        [[UIViewController alloc] init];
+
+    versionGatePlaceholder.view.backgroundColor =
+        [UIColor blackColor];
+
+    self.window.rootViewController =
+        versionGatePlaceholder;
+
     [self.window makeKeyAndVisible];
-    
+
+    /*
+     * =========================================================
+     * PROTECCIÓN GUARDADA
+     * =========================================================
+     */
+
     [self applySavedScreenProtection];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(xfRequireNewLogin:)
+                                                 name:@"XITForgeLicenseNeedsLogin"
+                                               object:nil];
+
+    /*
+     * =========================================================
+     * CONTROL DE VERSIÓN
+     * =========================================================
+     *
+     * La licencia NO se muestra hasta que el servidor confirme
+     * que esta versión de la IPA puede seguir utilizándose.
+     */
+
     [self verificarVersionDeApp];
-    
+
     return YES;
 }
 
 - (void)applicationDidBecomeActive:(UIApplication *)application {
+
+    /*
+     * Volver a consultar cada vez que la app regresa al frente.
+     * Así una versión que fue bloqueada mientras estaba abierta
+     * queda bloqueada al volver a la app.
+     */
+
     if (self.window && !self.versionCheckInProgress) {
+        if (self.initialVersionGateCompleted && !self.lockWindow) {
+            // Prevent using an already-unlocked home while server auth runs.
+            UIViewController *waiting = [[UIViewController alloc] init];
+            waiting.view.backgroundColor = [UIColor blackColor];
+            self.window.rootViewController = waiting;
+        }
         [self verificarVersionDeApp];
     }
 }
 
 #pragma mark - App Version Gate
+
 - (void)verificarVersionDeApp {
-    if (self.versionCheckInProgress) return;
+
+    if (self.versionCheckInProgress) {
+        return;
+    }
+
+    /*
+     * No mostramos ninguna tarjeta durante la comprobación normal.
+     * El usuario ve únicamente el fondo negro durante esos instantes.
+     * La pantalla de bloqueo solo aparece si realmente hace falta.
+     */
+
     self.versionCheckInProgress = YES;
+
     __weak typeof(self) weakSelf = self;
-    [AppVersionChecker checkWithCompletion:^(BOOL success, BOOL blocked, BOOL updateAvailable, NSString *currentVersion, NSString *latestVersion, NSString *minimumVersion, NSString *message, NSString *downloadURL, NSString * _Nullable errorMessage) {
+
+    [AppVersionChecker
+        checkWithCompletion:
+    ^(BOOL success,
+      BOOL blocked,
+      BOOL updateAvailable,
+      NSString *currentVersion,
+      NSString *latestVersion,
+      NSString *minimumVersion,
+      NSString *message,
+      NSString *downloadURL,
+      NSString * _Nullable errorMessage) {
+
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) return;
+
+        if (!strongSelf) {
+            return;
+        }
+
         strongSelf.versionCheckInProgress = NO;
+
+        /*
+         * FAIL CLOSED:
+         * Si no se puede verificar con el servidor, la app no
+         * continúa. Esto evita saltarse el control quitando Internet.
+         */
         if (!success) {
-            [strongSelf mostrarBloqueoDeVersionConTitulo:@"No se pudo verificar la versión"
-                mensaje:(errorMessage.length > 0 ? errorMessage : @"Comprueba tu conexión a Internet y vuelve a intentarlo.")
-                versionActual:currentVersion versionRequerida:@"" downloadURL:@"" mostrarDescarga:NO];
+
+            [strongSelf
+                mostrarBloqueoDeVersionConTitulo:
+                    @"No se pudo verificar la versión"
+                mensaje:
+                    (errorMessage.length > 0
+                        ? errorMessage
+                        : @"Comprueba tu conexión a Internet y vuelve a intentarlo.")
+                versionActual:currentVersion
+                versionRequerida:@""
+                downloadURL:@""
+                mostrarDescarga:NO];
+
             return;
         }
+
         if (blocked) {
-            NSString *finalMessage = message.length > 0 ? message : @"Esta versión de XITFORGE ya no está disponible. Descarga la nueva versión para continuar.";
-            NSString *required = minimumVersion.length > 0 ? minimumVersion : latestVersion;
-            [strongSelf mostrarBloqueoDeVersionConTitulo:@"Actualización requerida"
-                mensaje:finalMessage versionActual:currentVersion versionRequerida:required
-                downloadURL:downloadURL mostrarDescarga:(downloadURL.length > 0)];
+
+            NSString *finalMessage =
+                message.length > 0
+                    ? message
+                    : @"Esta versión de XITFORGE ya no está disponible. Descarga la nueva versión para continuar.";
+
+            NSString *required =
+                minimumVersion.length > 0
+                    ? minimumVersion
+                    : latestVersion;
+
+            [strongSelf
+                mostrarBloqueoDeVersionConTitulo:
+                    @"Actualización requerida"
+                mensaje:finalMessage
+                versionActual:currentVersion
+                versionRequerida:required
+                downloadURL:downloadURL
+                mostrarDescarga:(downloadURL.length > 0)];
+
             return;
         }
-        BOOL firstSuccessfulVersionCheck = !strongSelf.initialVersionGateCompleted;
+
+        /*
+         * Versión permitida.
+         *
+         * En el primer arranque cambiamos el fondo negro por la
+         * interfaz principal SOLO después de recibir la aprobación
+         * del servidor. Esto elimina el parpadeo visual.
+         */
+        BOOL firstSuccessfulVersionCheck =
+            !strongSelf.initialVersionGateCompleted;
+
         if (firstSuccessfulVersionCheck) {
+
             strongSelf.initialVersionGateCompleted = YES;
-            strongSelf.window.rootViewController = strongSelf.mainTabBar;
+
+            strongSelf.window.rootViewController =
+                strongSelf.mainTabBar;
         }
+
         [strongSelf cerrarBloqueoDeVersion];
-        if (firstSuccessfulVersionCheck) {
+
+        /*
+         * El flujo de licencia solo se inicia una vez.
+         * Las comprobaciones posteriores al volver al primer plano
+         * únicamente sirven para bloquear si la versión cambió.
+         */
+        if (!strongSelf.lockWindow) {
             [strongSelf mostrarPantallaLicencia];
         }
     }];
 }
 
-- (void)mostrarBloqueoDeVersionConTitulo:(NSString *)titulo mensaje:(NSString *)mensaje versionActual:(NSString *)versionActual versionRequerida:(NSString *)versionRequerida downloadURL:(NSString *)downloadURL mostrarDescarga:(BOOL)mostrarDescarga {
+- (void)mostrarBloqueoDeVersionConTitulo:(NSString *)titulo
+                                 mensaje:(NSString *)mensaje
+                           versionActual:(NSString *)versionActual
+                       versionRequerida:(NSString *)versionRequerida
+                             downloadURL:(NSString *)downloadURL
+                         mostrarDescarga:(BOOL)mostrarDescarga {
+
     AppVersionLockViewController *vc = nil;
-    if ([self.versionWindow.rootViewController isKindOfClass:[AppVersionLockViewController class]]) {
-        vc = (AppVersionLockViewController *)self.versionWindow.rootViewController;
+
+    if ([self.versionWindow.rootViewController
+            isKindOfClass:[AppVersionLockViewController class]]) {
+
+        vc =
+            (AppVersionLockViewController *)
+                self.versionWindow.rootViewController;
     }
+
     if (!vc) {
+
         vc = [[AppVersionLockViewController alloc] init];
-        self.versionWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        self.versionWindow.windowLevel = UIWindowLevelAlert + 10;
-        self.versionWindow.backgroundColor = [UIColor blackColor];
+
+        self.versionWindow =
+            [[UIWindow alloc]
+                initWithFrame:[UIScreen mainScreen].bounds];
+
+        self.versionWindow.windowLevel =
+            UIWindowLevelAlert + 10;
+
+        self.versionWindow.backgroundColor =
+            [UIColor blackColor];
+
         self.versionWindow.rootViewController = vc;
     }
+
     vc.headline = titulo ?: @"";
     vc.messageText = mensaje ?: @"";
     vc.currentVersion = versionActual ?: @"";
     vc.requiredVersion = versionRequerida ?: @"";
     vc.downloadURL = downloadURL ?: @"";
     vc.showDownloadButton = mostrarDescarga;
+
     __weak typeof(self) weakSelf = self;
+
     vc.retryHandler = ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (strongSelf) [strongSelf verificarVersionDeApp];
+        if (strongSelf) {
+            [strongSelf verificarVersionDeApp];
+        }
     };
+
     [self.versionWindow makeKeyAndVisible];
 }
 
 - (void)cerrarBloqueoDeVersion {
+
     if (!self.versionWindow) {
         [self.window makeKeyAndVisible];
         return;
     }
+
     [self.versionWindow resignKeyWindow];
     self.versionWindow.hidden = YES;
     self.versionWindow.rootViewController = nil;
     self.versionWindow = nil;
+
     [self.window makeKeyAndVisible];
 }
 
 #pragma mark - Screen Protection
+
 - (void)applySavedScreenProtection {
-    BOOL enabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"screenProtection"];
+
+    BOOL enabled =
+        [[NSUserDefaults standardUserDefaults]
+            boolForKey:@"screenProtection"];
+
     if (enabled) {
-        [[ScreenProtectionManager shared] enableProtection];
+
+        [[ScreenProtectionManager shared]
+            enableProtection];
+
     } else {
-        [[ScreenProtectionManager shared] disableProtection];
+
+        [[ScreenProtectionManager shared]
+            disableProtection];
     }
 }
 
 #pragma mark - License Validation
+
 - (void)mostrarPantallaLicencia {
-    NSString *savedKey = [[NSUserDefaults standardUserDefaults] stringForKey:@"MiFilzaLicenseKey"];
+
+    NSString *savedKey =
+        [[NSUserDefaults standardUserDefaults]
+            stringForKey:@"MiFilzaLicenseKey"];
+
+    /*
+     * =========================================================
+     * NO HAY KEY
+     * =========================================================
+     */
+
     if (savedKey.length == 0) {
-        [self mostrarVentanaDeLicencia];
+        [self xfRequireNewLogin:nil];
         return;
     }
-    [LicenseValidator validateKey:savedKey completion:^(BOOL valid, NSString * _Nullable reason, NSString * _Nullable expiresAt) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (valid) {
-                NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-                if (expiresAt.length > 0) {
-                    [defaults setObject:expiresAt forKey:@"MiFilzaLicenseExpiresAt"];
-                } else {
-                    [defaults removeObjectForKey:@"MiFilzaLicenseExpiresAt"];
+
+    /*
+     * =========================================================
+     * HAY KEY
+     *
+     * NO confiamos solamente en el formato.
+     * Consultamos el servidor.
+     * =========================================================
+     */
+
+    [LicenseValidator
+        validateKey:savedKey
+        completion:^(BOOL valid,
+                    NSString * _Nullable reason,
+                    NSString * _Nullable expiresAt) {
+
+        dispatch_async(
+            dispatch_get_main_queue(),
+            ^{
+
+                /*
+                 * =================================================
+                 * LICENCIA VÁLIDA
+                 * =================================================
+                 */
+
+                if (valid) {
+
+                    NSUserDefaults *defaults =
+                        [NSUserDefaults standardUserDefaults];
+
+                    /*
+                     * Actualizar la fecha recibida
+                     * desde el servidor.
+                     */
+
+                    if (expiresAt.length > 0) {
+
+                        [defaults
+                            setObject:expiresAt
+                            forKey:@"MiFilzaLicenseExpiresAt"];
+
+                    } else {
+
+                        [defaults
+                            removeObjectForKey:
+                                @"MiFilzaLicenseExpiresAt"];
+                    }
+
+                    [defaults synchronize];
+
+                    self.window.rootViewController = self.mainTabBar;
+                    [self xfStartLicenseRecheckTimer];
+                    [self xfWarnIfKeyApproachingExpiry:expiresAt];
+                    [self applySavedScreenProtection];
+
+                    return;
                 }
-                [defaults synchronize];
-                [self applySavedScreenProtection];
-                return;
+
+                /*
+                 * =================================================
+                 * LICENCIA INVÁLIDA
+                 *
+                 * revoked
+                 * expired
+                 * not_found
+                 * device_limit
+                 * server_error
+                 * network_error
+                 * =================================================
+                 */
+
+                NSLog(
+                    @"XITFORGE License rejected: %@",
+                    reason
+                );
+
+                // Do not erase the old key or show a new-key screen before restoration.
+                [self xfRequireNewLogin:nil];
             }
-            NSLog(@"XITFORGE License rejected: %@", reason);
-            NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-            [defaults removeObjectForKey:@"MiFilzaLicenseKey"];
-            [defaults removeObjectForKey:@"MiFilzaLicenseExpiresAt"];
-            [defaults synchronize];
-            [[ScreenProtectionManager shared] disableProtection];
-            [self mostrarVentanaDeLicencia];
-        });
+        );
     }];
 }
 
 #pragma mark - License Window
+
 - (void)mostrarVentanaDeLicencia {
+
+    /*
+     * Si ya existe una ventana de licencia,
+     * simplemente traerla al frente.
+     */
+
     if (self.lockWindow) {
+
         [self.lockWindow makeKeyAndVisible];
+
         return;
     }
-    LicenseViewController *licenseVC = [[LicenseViewController alloc] init];
-    licenseVC.modalPresentationStyle = UIModalPresentationFullScreen;
+
+    LicenseViewController *licenseVC =
+        [[LicenseViewController alloc] init];
+
+    licenseVC.modalPresentationStyle =
+        UIModalPresentationFullScreen;
+
     __weak typeof(self) weakSelf = self;
+
     licenseVC.onLicenseValidated = ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
         dispatch_async(dispatch_get_main_queue(), ^{
-            [strongSelf applySavedScreenProtection];
-            [strongSelf.lockWindow resignKeyWindow];
-            strongSelf.lockWindow.hidden = YES;
-            strongSelf.lockWindow = nil;
-            [strongSelf.window makeKeyAndVisible];
+            // Nunca abrir las funciones premium mientras queden cambios
+            // pendientes de restaurar de la licencia anterior.
+            if (strongSelf.xfCleanupInProgress) {
+                strongSelf.xfLoginValidatedDuringCleanup = YES;
+                return;
+            }
+            [strongSelf xfFinishValidatedLogin];
         });
     };
-    self.lockWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.lockWindow.windowLevel = UIWindowLevelAlert + 1;
-    self.lockWindow.backgroundColor = [UIColor blackColor];
-    self.lockWindow.rootViewController = [[UIViewController alloc] init];
+
+    /*
+     * =========================================================
+     * LOCK WINDOW
+     * =========================================================
+     */
+
+    self.lockWindow =
+        [[UIWindow alloc]
+            initWithFrame:[UIScreen mainScreen].bounds];
+
+    self.lockWindow.windowLevel =
+        UIWindowLevelAlert + 1;
+
+    self.lockWindow.backgroundColor =
+        [UIColor blackColor];
+
+    self.lockWindow.rootViewController =
+        [[UIViewController alloc] init];
+
     [self.lockWindow makeKeyAndVisible];
-    [self.lockWindow.rootViewController presentViewController:licenseVC animated:YES completion:nil];
+
+    [self.lockWindow.rootViewController
+        presentViewController:licenseVC
+                     animated:YES
+                   completion:nil];
 }
 
-#pragma mark - License Logout Support
-- (void)logoutCurrentLicense {
+- (void)xfStartLicenseRecheckTimer {
+    [self.licenseRecheckTimer invalidate];
+    self.licenseRecheckTimer = [NSTimer scheduledTimerWithTimeInterval:60.0
+                                                              target:self
+                                                            selector:@selector(xfRecheckLicensePeriodically:)
+                                                            userInfo:nil
+                                                             repeats:YES];
+}
+
+- (void)xfRecheckLicensePeriodically:(NSTimer *)timer {
+    (void)timer;
+    if (self.licenseRecheckInProgress || self.versionCheckInProgress || self.lockWindow ||
+        [UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
+    NSString *savedKey = [[NSUserDefaults standardUserDefaults] stringForKey:@"MiFilzaLicenseKey"];
+    if (savedKey.length == 0) { [self xfRequireNewLogin:nil]; return; }
+    self.licenseRecheckInProgress = YES;
+    __weak typeof(self) weakSelf = self;
+    [LicenseValidator validateKey:savedKey completion:^(BOOL valid, NSString *reason, NSString *expiresAt) {
+        (void)reason;
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.licenseRecheckInProgress = NO;
+        if (!valid) { [strongSelf xfRequireNewLogin:nil]; return; }
+        if (expiresAt.length > 0) {
+            [strongSelf xfWarnIfKeyApproachingExpiry:expiresAt];
+            [[NSUserDefaults standardUserDefaults] setObject:expiresAt forKey:@"MiFilzaLicenseExpiresAt"];
+        }
+    }];
+}
+
+// Only a friendly warning. Actual expiry/revocation is enforced by the server.
+- (void)xfWarnIfKeyApproachingExpiry:(NSString *)expiresAt {
+    if (![expiresAt isKindOfClass:[NSString class]] || expiresAt.length == 0 ||
+        self.lockWindow || self.versionWindow) return;
+    NSISO8601DateFormatter *iso = [[NSISO8601DateFormatter alloc] init];
+    iso.formatOptions = NSISO8601DateFormatWithInternetDateTime |
+        NSISO8601DateFormatWithFractionalSeconds;
+    NSDate *expiry = [iso dateFromString:expiresAt];
+    if (!expiry) {
+        iso.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+        expiry = [iso dateFromString:expiresAt];
+    }
+    NSTimeInterval remaining = [expiry timeIntervalSinceNow];
+    if (remaining <= 0 || remaining > 300 ||
+        [self.lastExpiryWarningDate isEqualToString:expiresAt] ||
+        !self.mainTabBar || self.mainTabBar.presentedViewController) return;
+    self.lastExpiryWarningDate = [expiresAt copy];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"TU KEY ESTÁ POR VENCER"
+        message:@"Faltan menos de 5 minutos. Las opciones se bloquearán al vencer la licencia."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"ENTENDIDO"
+        style:UIAlertActionStyleDefault handler:nil]];
+    [self.mainTabBar presentViewController:alert animated:YES completion:nil];
+}
+
+// El registro persistente permite detectar opciones que quedaron aplicadas
+// mientras XITFORGE estuvo cerrada. No se borra hasta restaurarlas de verdad.
+- (BOOL)xfHasOptionsPendingRestoration {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults removeObjectForKey:@"MiFilzaLicenseKey"];
-    [defaults removeObjectForKey:@"MiFilzaLicenseExpiresAt"];
-    [defaults synchronize];
-    [[ScreenProtectionManager shared] disableProtection];
+    for (NSString *game in @[@"freefire_normal", @"freefire_max"]) {
+        NSString *key = [NSString stringWithFormat:@"XITFORGE_ACTIVE_OPTIONS_%@", game];
+        NSArray *saved = [defaults arrayForKey:key];
+        if (saved.count > 0) return YES;
+    }
+    return NO;
+}
+
+- (void)xfUnlockValidatedLicense {
+    if ([self xfHasOptionsPendingRestoration]) return;
+    self.window.rootViewController = self.mainTabBar;
+    [self xfStartLicenseRecheckTimer];
+    [self applySavedScreenProtection];
+    if (self.lockWindow) {
+        [self.lockWindow resignKeyWindow];
+        self.lockWindow.hidden = YES;
+        self.lockWindow.rootViewController = nil;
+        self.lockWindow = nil;
+    }
+    [self.window makeKeyAndVisible];
+}
+
+- (void)xfShowCleanupNotice {
+    // Keep the usual license screen visible without displaying a cleanup alert.
+    // Pending restorations remain saved; a new login or launch will retry them.
     [self mostrarVentanaDeLicencia];
 }
 
+- (void)xfFinishValidatedLogin {
+    if (self.xfCleanupInProgress) {
+        self.xfLoginValidatedDuringCleanup = YES;
+        return;
+    }
+    if (![self xfHasOptionsPendingRestoration]) {
+        [self xfUnlockValidatedLicense];
+        return;
+    }
+
+    // La nueva key ya fue validada por LicenseViewController. Si quedaron
+    // opciones previas, intentar DESACTIVAR antes de desbloquear la app.
+    self.xfCleanupInProgress = YES;
+    __weak typeof(self) weakSelf = self;
+    [HomeViewController xfDeactivatePersistedOptionsWithCompletion:^(BOOL success) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf.xfCleanupInProgress = NO;
+            if (success && ![strongSelf xfHasOptionsPendingRestoration]) {
+                [strongSelf xfUnlockValidatedLicense];
+            } else {
+                [strongSelf xfShowCleanupNotice];
+            }
+        });
+    }];
+}
+
+- (void)xfRequireNewLogin:(NSNotification *)notification {
+    (void)notification;
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self xfRequireNewLogin:nil]; });
+        return;
+    }
+    if (self.xfCleanupInProgress) return;
+
+    [self.licenseRecheckTimer invalidate];
+    self.licenseRecheckTimer = nil;
+    self.licenseRecheckInProgress = NO;
+
+    // Mostrar SIEMPRE el login habitual, no una pantalla negra independiente.
+    [self mostrarVentanaDeLicencia];
+
+    if (![self xfHasOptionsPendingRestoration]) {
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        [defaults removeObjectForKey:@"MiFilzaLicenseKey"];
+        [defaults removeObjectForKey:@"MiFilzaLicenseExpiresAt"];
+        [LicenseValidator clearSession];
+        return;
+    }
+
+    // Conservar temporalmente la key antigua: el servidor la utiliza
+    // exclusivamente para obtener la autorización de restauración.
+    NSString *oldKey = [[[NSUserDefaults standardUserDefaults]
+        stringForKey:@"MiFilzaLicenseKey"] copy];
+    self.xfCleanupInProgress = YES;
+    __weak typeof(self) weakSelf = self;
+    [HomeViewController xfDeactivatePersistedOptionsWithCompletion:^(BOOL success) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf.xfCleanupInProgress = NO;
+
+            BOOL newLicenseWasValidated = strongSelf.xfLoginValidatedDuringCleanup;
+            strongSelf.xfLoginValidatedDuringCleanup = NO;
+
+            if (success && ![strongSelf xfHasOptionsPendingRestoration]) {
+                if (newLicenseWasValidated) {
+                    [strongSelf xfUnlockValidatedLicense];
+                } else {
+                    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+                    NSString *currentKey = [defaults stringForKey:@"MiFilzaLicenseKey"];
+                    if (!oldKey || [currentKey isEqualToString:oldKey]) {
+                        [defaults removeObjectForKey:@"MiFilzaLicenseKey"];
+                        [defaults removeObjectForKey:@"MiFilzaLicenseExpiresAt"];
+                        [LicenseValidator clearSession];
+                    }
+                }
+                return;
+            }
+
+            if (newLicenseWasValidated) {
+                // El usuario ya validó otra key durante el intento anterior:
+                // probar con su nueva sesión antes de mostrar un error.
+                [strongSelf xfFinishValidatedLogin];
+                return;
+            }
+            // Si falla, el login queda operativo para reintentar. No se
+            // eliminan los registros activos ni se afirma que se restauraron.
+            [strongSelf xfShowCleanupNotice];
+        });
+    }];
+}
+
+#pragma mark - License Logout Support
+
+- (void)logoutCurrentLicense {
+    // Do not erase the old key before the server supplies DESACTIVAR files.
+    [self xfRequireNewLogin:nil];
+}
+
 #pragma mark - License Format
+
 - (BOOL)validarFormatoLicencia:(NSString *)licencia {
-    if (licencia.length == 0) return NO;
-    NSString *regex = @"^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$";
-    NSPredicate *predicado = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", regex];
-    return [predicado evaluateWithObject:licencia];
+
+    if (licencia.length == 0) {
+        return NO;
+    }
+
+    NSString *regex =
+        @"^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$";
+
+    NSPredicate *predicado =
+        [NSPredicate predicateWithFormat:
+            @"SELF MATCHES %@", regex];
+
+    return
+        [predicado evaluateWithObject:licencia];
 }
 
 @end

@@ -1,4 +1,5 @@
 #import "HomeViewController.h"
+#import "LicenseValidator.h"
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <dlfcn.h>
@@ -22,7 +23,9 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
     NSString *sourcePath = sourceURL.path;
     NSString *destinationPath = destinationURL.path;
     if (sourcePath.length == 0 || destinationPath.length == 0) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
+        if (errorOut) {
+            *errorOut = [NSError errorWithDomain:@"XITFORGE" code:2001 userInfo:@{NSLocalizedDescriptionKey: @"Ruta de origen o destino vacía."}];
+        }
         return NO;
     }
     const char *src = sourcePath.fileSystemRepresentation;
@@ -42,12 +45,14 @@ static BOOL XITForgeWriteExactFile(NSURL *sourceURL, NSURL *destinationURL, NSEr
             return NO;
         }
     } else if (errno != ENOENT) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+        int e = errno;
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
         return NO;
     }
     int inFD = open(src, O_RDONLY | O_CLOEXEC);
     if (inFD < 0) {
-        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+        int e = errno;
+        if (errorOut) *errorOut = [NSError errorWithDomain:NSPOSIXErrorDomain code:e userInfo:nil];
         return NO;
     }
     int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
@@ -378,6 +383,10 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 @property (nonatomic, strong) UIButton *activateButton;
 @property (nonatomic, strong) UIActivityIndicatorView *activateSpinner;
 @property (nonatomic, assign) BOOL activationInProgress;
+@property (nonatomic, assign) BOOL activationAuthorizationInProgress;
+@property (nonatomic, assign) BOOL warnOnCurrentActivation;
+@property (nonatomic, assign) BOOL xfCleanupPending;
+@property (nonatomic, copy) void (^xfCleanupCompletion)(BOOL success);
 @property (nonatomic, strong) UIButton *deactivateButton;
 @property (nonatomic, assign) BOOL deactivationInProgress;
 @property (nonatomic, strong) UIView *aimbotWarningOverlay;
@@ -388,12 +397,22 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 @property (nonatomic, strong) NSURLSession *downloadSession;
 @end
 
+// Keep the most recent options screen for each game alive while it has active
+// changes, so background license rechecks can call the existing DESACTIVAR path.
+static NSMutableDictionary<NSString *, XITForgeOptionsViewController *> *XFActiveScreens(void) {
+    static NSMutableDictionary *screens;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ screens = [NSMutableDictionary dictionary]; });
+    return screens;
+}
+
 @implementation XITForgeOptionsViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor blackColor];
     [self loadPersistedActiveOptions];
+    if (self.activeOptionKeys.count && self.game.length) XFActiveScreens()[self.game] = self;
     [self configureNavigationTitle];
     [self setupUI];
     [self loadOptions];
@@ -430,9 +449,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     if (option.optionId != nil) return [NSString stringWithFormat:@"id:%@", option.optionId.stringValue];
     NSString *route = option.route ?: @"";
     NSString *fileName = option.fileName ?: @"";
-    NSString *key = [NSString stringWithFormat:@"file:%@|%@", route, fileName];
-    NSLog(@"XITFORGE DEACT: activationKeyForOption '%@' -> '%@'", option.name, key);
-    return key;
+    return [NSString stringWithFormat:@"file:%@|%@", route, fileName];
 }
 
 - (void)loadPersistedActiveOptions {
@@ -457,116 +474,75 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     if (key.length == 0) return;
     [self.activeOptionKeys addObject:key];
     [self persistActiveOptions];
+    if (self.game.length) XFActiveScreens()[self.game] = self;
 }
 
 - (void)clearActivatedOptions {
     [self.activeOptionKeys removeAllObjects];
     [self persistActiveOptions];
+    if (self.game.length && XFActiveScreens()[self.game] == self) [XFActiveScreens() removeObjectForKey:self.game];
 }
 
 - (NSArray<XITForgeOption *> *)activeOptionsForDeactivation {
     NSMutableArray<XITForgeOption *> *active = [NSMutableArray array];
     for (XITForgeOption *option in self.options) {
-        if ([self isOptionActivated:option]) {
-            [active addObject:option];
-        }
+        if ([self isOptionActivated:option]) [active addObject:option];
     }
     return [active copy];
 }
 
-// ✅ CORREGIDO: Genera key para el diccionario original del servidor
 - (NSString *)activationKeyForOriginalDictionary:(NSDictionary *)raw {
     NSNumber *itemId = [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
-    if (itemId != nil) {
-        NSString *key = [NSString stringWithFormat:@"id:%@", itemId.stringValue];
-        NSLog(@"XITFORGE DEACT: Key original por id: '%@'", key);
-        return key;
-    }
+    if (itemId != nil) return [NSString stringWithFormat:@"id:%@", itemId.stringValue];
     NSString *route = [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : @"";
     NSString *fileName = nil;
-    if ([raw[@"fileName"] isKindOfClass:[NSString class]]) {
-        fileName = raw[@"fileName"];
-    } else if ([raw[@"file"] isKindOfClass:[NSString class]]) {
-        fileName = raw[@"file"];
-    } else {
-        fileName = @"";
-    }
-    NSString *key = [NSString stringWithFormat:@"file:%@|%@", route, fileName];
-    NSLog(@"XITFORGE DEACT: Key original por archivo: '%@' (route='%@', file='%@')", key, route, fileName);
-    return key;
+    if ([raw[@"fileName"] isKindOfClass:[NSString class]]) fileName = raw[@"fileName"];
+    else if ([raw[@"file"] isKindOfClass:[NSString class]]) fileName = raw[@"file"];
+    else fileName = @"";
+    return [NSString stringWithFormat:@"file:%@|%@", route, fileName];
 }
 
-// ✅ CORREGIDO: Comparación flexible de keys
 - (BOOL)originalDictionaryMatchesCurrentDeactivation:(NSDictionary *)raw {
     if (self.deactivationTargetsAll) return YES;
     
-    // Extraer fileName y route del original del servidor
     NSString *originalFileName = nil;
-    NSString *originalRoute = nil;
-    
-    if ([raw[@"fileName"] isKindOfClass:[NSString class]]) {
-        originalFileName = raw[@"fileName"];
-    } else if ([raw[@"file"] isKindOfClass:[NSString class]]) {
-        originalFileName = raw[@"file"];
-    }
-    
-    if ([raw[@"route"] isKindOfClass:[NSString class]]) {
-        originalRoute = raw[@"route"];
-    }
+    if ([raw[@"fileName"] isKindOfClass:[NSString class]]) originalFileName = raw[@"fileName"];
+    else if ([raw[@"file"] isKindOfClass:[NSString class]]) originalFileName = raw[@"file"];
     
     NSString *key = [self activationKeyForOriginalDictionary:raw];
-    NSLog(@"XITFORGE DEACT: Comparando key='%@' targets=%@ originalFileName='%@'", key, self.deactivationTargetKeys, originalFileName);
-    
     if (key.length == 0) return NO;
     
-    // 1. Comparación exacta primero
     if ([self.deactivationTargetKeys containsObject:key]) return YES;
     
-    // 2. Comparación flexible
     for (NSString *targetKey in self.deactivationTargetKeys) {
-        
-        // Caso A: targetKey es "file:route|fileName"
         if ([targetKey hasPrefix:@"file:"]) {
             NSString *afterPrefix = [targetKey substringFromIndex:5];
             NSArray *targetParts = [afterPrefix componentsSeparatedByString:@"|"];
             if (targetParts.count == 2 && originalFileName) {
                 NSString *targetFile = targetParts[1];
-                if ([targetFile caseInsensitiveCompare:originalFileName] == NSOrderedSame) {
-                    NSLog(@"XITFORGE DEACT: Match flexible por fileName: %@", targetFile);
-                    return YES;
-                }
+                if ([targetFile caseInsensitiveCompare:originalFileName] == NSOrderedSame) return YES;
             }
         }
-        
-        // Caso B: targetKey es "id:X" → buscar la opción con ese id y comparar fileName
         if ([targetKey hasPrefix:@"id:"]) {
             NSString *idStr = [targetKey substringFromIndex:3];
             for (XITForgeOption *opt in self.options) {
                 if (opt.optionId && [opt.optionId.stringValue isEqualToString:idStr]) {
                     if (opt.fileName && originalFileName &&
-                        [opt.fileName caseInsensitiveCompare:originalFileName] == NSOrderedSame) {
-                        NSLog(@"XITFORGE DEACT: Match por id=%@ → fileName=%@", idStr, originalFileName);
-                        return YES;
-                    }
+                        [opt.fileName caseInsensitiveCompare:originalFileName] == NSOrderedSame) return YES;
                     break;
                 }
             }
         }
     }
-    
-    NSLog(@"XITFORGE DEACT: No match para key='%@'", key);
     return NO;
 }
 
-// ✅ CORREGIDO: Prepara desactivación individual con logs
 - (void)prepareDeactivationForOption:(XITForgeOption *)option {
     if (!option) return;
     NSString *key = [self activationKeyForOption:option];
-    NSLog(@"XITFORGE DEACT: Preparando desactivación de '%@' con key='%@'", option.name, key);
     if (key.length == 0) return;
     self.deactivationTargetsAll = NO;
     self.deactivationTargetKeys = [NSSet setWithObject:key];
-    NSLog(@"XITFORGE DEACT: deactivationTargetKeys = %@", self.deactivationTargetKeys);
     [self deactivateAllOptions];
 }
 
@@ -577,14 +553,13 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSString *key = [self activationKeyForOption:option];
         if (key.length > 0) [keys addObject:key];
     }
-    NSLog(@"XITFORGE DEACT: Desactivar TODOS, keys=%@", keys);
     self.deactivationTargetsAll = YES;
     self.deactivationTargetKeys = [keys copy];
     [self deactivateAllOptions];
 }
 
 - (void)showDeactivationChooser {
-    if (self.activationInProgress || self.deactivationInProgress) return;
+    if (self.activationInProgress || self.deactivationInProgress || self.activationAuthorizationInProgress) return;
     NSArray<XITForgeOption *> *active = [self activeOptionsForDeactivation];
     if (active.count == 0) {
         self.selectionHintLabel.text = @"NO HAY OPCIONES ACTIVAS";
@@ -597,23 +572,19 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     __weak typeof(self) weakSelf = self;
     for (XITForgeOption *option in active) {
         NSString *title = option.name.length > 0 ? option.name : @"OPCIÓN ACTIVA";
-        UIAlertAction *action = [UIAlertAction actionWithTitle:title
-            style:UIAlertActionStyleDefault
-            handler:^(__unused UIAlertAction * _Nonnull action) {
-                __strong typeof(weakSelf) strongSelf = weakSelf;
-                if (!strongSelf) return;
-                [strongSelf prepareDeactivationForOption:option];
-            }];
+        UIAlertAction *action = [UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction * _Nonnull action) {
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            [strongSelf prepareDeactivationForOption:option];
+        }];
         [sheet addAction:action];
     }
     if (active.count > 1) {
-        UIAlertAction *all = [UIAlertAction actionWithTitle:@"DESACTIVAR TODOS"
-            style:UIAlertActionStyleDestructive
-            handler:^(__unused UIAlertAction * _Nonnull action) {
-                __strong typeof(weakSelf) strongSelf = weakSelf;
-                if (!strongSelf) return;
-                [strongSelf prepareDeactivationForAllActiveOptions];
-            }];
+        UIAlertAction *all = [UIAlertAction actionWithTitle:@"DESACTIVAR TODOS" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction * _Nonnull action) {
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            [strongSelf prepareDeactivationForAllActiveOptions];
+        }];
         [sheet addAction:all];
     }
     [sheet addAction:[UIAlertAction actionWithTitle:@"CANCELAR" style:UIAlertActionStyleCancel handler:nil]];
@@ -667,14 +638,11 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 }
 
 - (NSArray<XITForgeOption *> *)selectedOptions {
-    NSMutableArray<XITForgeOption *> *selected = [NSMutableArray arrayWithCapacity:3];
-    XITForgeOption *aimbot = [self optionAtIndexPath:self.selectedAimbotIndexPath forCategory:@"aimbot"];
-    XITForgeOption *hologram = [self optionAtIndexPath:self.selectedHologramIndexPath forCategory:@"holograma"];
-    XITForgeOption *fps = [self optionAtIndexPath:self.selectedFPSIndexPath forCategory:@"fps"];
-    if (aimbot) [selected addObject:aimbot];
-    if (hologram) [selected addObject:hologram];
-    if (fps) [selected addObject:fps];
-    return [selected copy];
+    // ACTIVA UNICAMENTE la opcion de la categoria que esta viendo el usuario.
+    // Las selecciones sin activar en las otras pestañas NO se aplican en segundo plano.
+    XITForgeOption *current = [self optionAtIndexPath:self.selectedOptionIndexPath
+                                          forCategory:self.selectedCategory ?: @"aimbot"];
+    return current ? @[current] : @[];
 }
 
 - (NSString *)selectionHintText {
@@ -1151,10 +1119,16 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = @"GET";
     request.timeoutInterval = 20.0;
+    [LicenseValidator authorizeRequest:request completion:^(BOOL authorized) {
+    if (!authorized) { dispatch_async(dispatch_get_main_queue(), ^{ [self showError:@"Sin key válida. Inicia sesión y vuelve a intentarlo."]; }); return; }
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.activityIndicator stopAnimating];
-            if (error) { [self showError:@"No se pudieron cargar las opciones."]; return; }
+            [LicenseValidator handleProtectedHTTPResponse:response];
+            NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
+            if (error || !http || http.statusCode < 200 || http.statusCode >= 300) {
+                [self showError:@"No se pudieron cargar las opciones. Comprueba tu licencia y tu conexión."]; return;
+            }
             if (!data) { [self showError:@"El servidor no devolvió datos."]; return; }
             NSError *jsonError = nil;
             id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
@@ -1163,7 +1137,8 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSNumber *ok = dictionary[@"ok"];
             if (![ok isKindOfClass:[NSNumber class]] || !ok.boolValue) {
                 NSString *serverError = [dictionary[@"error"] isKindOfClass:[NSString class]] ? dictionary[@"error"] : @"No se pudieron cargar las opciones.";
-                [self showError:serverError];
+                (void)serverError;
+                [self showError:@"No se pudieron cargar las opciones. Comprueba tu licencia y conexión."];
                 return;
             }
             NSArray *rawOptions = dictionary[@"options"];
@@ -1216,10 +1191,12 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         });
     }];
     [task resume];
+    }];
 }
 
 - (void)showError:(NSString *)message {
     [self.activityIndicator stopAnimating];
+    self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.text = message;
     self.statusLabel.hidden = NO;
     [self.tableView reloadData];
@@ -1289,6 +1266,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 - (void)finishActivationUIWithSuccess:(BOOL)success message:(NSString *)message {
     self.activationInProgress = NO;
     self.tableView.userInteractionEnabled = YES;
+    if (!success) self.warnOnCurrentActivation = NO;
     [self.activateSpinner stopAnimating];
     if (!self.deactivationInProgress) { self.deactivateButton.enabled = YES; self.deactivateButton.alpha = 1.0; }
     NSArray<XITForgeOption *> *activatedOptions = [self.activationSucceededOptions copy] ?: @[];
@@ -1302,7 +1280,8 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             NSString *category = option.category.lowercaseString ?: @"";
             if ([category isEqualToString:@"aimbot"]) { activatedAimbot = YES; break; }
         }
-        if (activatedAimbot) [self showAimbotWarning];
+        if (activatedAimbot && self.warnOnCurrentActivation) [self showAimbotWarning];
+        self.warnOnCurrentActivation = NO;
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
     } else {
@@ -1313,6 +1292,12 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     }
     [self.tableView reloadData];
     [self updateActivateButtonForCurrentSelection];
+    if (self.xfCleanupPending) {
+        self.xfCleanupPending = NO;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self xfBeginAutoCleanupWithCompletion:self.xfCleanupCompletion];
+        });
+    }
 }
 
 - (void)activateNextPendingOption {
@@ -1328,31 +1313,55 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [self applyOption:self.currentActivationOption];
 }
 
+- (void)showCenteredActivationError:(NSString *)message {
+    if (self.presentedViewController) return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"NO SE PUDO ACTIVAR"
+        message:message ?: @"Comprueba tu key y conexión con el servidor."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"ENTENDIDO"
+        style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)activateSelectedOption {
-    if (self.activationInProgress || self.deactivationInProgress) return;
+    if (self.activationInProgress || self.deactivationInProgress ||
+        self.activationAuthorizationInProgress) return;
     NSArray<XITForgeOption *> *selected = [self selectedOptions];
-
-    if ([self isAimbotOnlyLicense]) {
-        for (XITForgeOption *option in selected) {
-            NSString *category = option.category.lowercaseString ?: @"holograma";
-            if (![category isEqualToString:@"aimbot"]) {
-                [self showPremiumRequiredAlert];
-                return;
-            }
+    if (selected.count != 1) return;
+    XITForgeOption *option = selected.firstObject;
+    if ([self isOptionActivated:option]) { [self updateActivateButtonForCurrentSelection]; return; }
+    if (!option.optionId || option.optionId.longLongValue < 1) {
+        [self showCenteredActivationError:@"La opción seleccionada no es válida."];
+        return;
+    }
+    self.activationAuthorizationInProgress = YES;
+    self.activateButton.enabled = NO;
+    self.tableView.userInteractionEnabled = NO;
+    __weak typeof(self) weakSelf = self;
+    [LicenseValidator authorizeActivationForOptionId:option.optionId
+        completion:^(BOOL authorized, BOOL showWarning) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.activationAuthorizationInProgress = NO;
+        strongSelf.tableView.userInteractionEnabled = YES;
+        if (!authorized) {
+            [strongSelf updateActivateButtonForCurrentSelection];
+            [strongSelf showCenteredActivationError:@"Sin key válida o sin autorización para esta opción. Comprueba tu licencia y conexión."];
+            return;
         }
-    }
-
-    NSMutableArray<XITForgeOption *> *pending = [NSMutableArray arrayWithCapacity:selected.count];
-    for (XITForgeOption *option in selected) {
-        if (![self isOptionActivated:option]) [pending addObject:option];
-    }
-    if (pending.count == 0) { [self updateActivateButtonForCurrentSelection]; return; }
-    [self beginActivationUI];
-    self.pendingActivationOptions = [pending copy];
-    self.activationSucceededOptions = [NSMutableArray arrayWithCapacity:pending.count];
-    self.currentActivationIndex = 0;
-    self.currentActivationOption = nil;
-    [self activateNextPendingOption];
+        // No aplicar otra opción si cambió la selección mientras se verificaba.
+        if (![strongSelf.selectedOptions.firstObject.optionId isEqualToNumber:option.optionId]) {
+            [strongSelf updateActivateButtonForCurrentSelection];
+            return;
+        }
+        strongSelf.warnOnCurrentActivation = showWarning;
+        [strongSelf beginActivationUI];
+        strongSelf.pendingActivationOptions = @[option];
+        strongSelf.activationSucceededOptions = [NSMutableArray arrayWithCapacity:1];
+        strongSelf.currentActivationIndex = 0;
+        strongSelf.currentActivationOption = nil;
+        [strongSelf activateNextPendingOption];
+    }];
 }
 
 - (void)beginDeactivationUI {
@@ -1368,7 +1377,6 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     [self.activityIndicator stopAnimating];
 }
 
-// ✅ CORREGIDO: Desactivación individual o total según deactivationTargetsAll
 - (void)finishDeactivationUIWithSuccess:(BOOL)success noOriginals:(BOOL)noOriginals {
     self.deactivationInProgress = NO;
     self.tableView.userInteractionEnabled = YES;
@@ -1381,16 +1389,19 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         [self updateActivateButtonForCurrentSelection];
         self.selectionHintLabel.text = @"SIN ORIGINALES CONFIGURADOS";
         self.selectionHintLabel.textColor = [UIColor colorWithWhite:0.52 alpha:1.0];
+        if (self.xfCleanupCompletion) {
+            void (^done)(BOOL) = [self.xfCleanupCompletion copy];
+            self.xfCleanupCompletion = nil;
+            done(NO);  // No originals: do not claim that any active modification was removed.
+        }
         return;
     }
     if (success) {
         if (self.deactivationTargetsAll) {
             [self clearActivatedOptions];
-            NSLog(@"XITFORGE DEACT: Todas las opciones desactivadas");
         } else {
             for (NSString *key in self.deactivationTargetKeys) {
                 [self.activeOptionKeys removeObject:key];
-                NSLog(@"XITFORGE DEACT: Opción desactivada con key='%@'", key);
             }
             [self persistActiveOptions];
         }
@@ -1408,16 +1419,62 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeError];
     }
-    [self.tableView reloadData];
+    if (success && self.activeOptionKeys.count == 0 && self.game.length &&
+        XFActiveScreens()[self.game] == self) [XFActiveScreens() removeObjectForKey:self.game];
     [self updateActivateButtonForCurrentSelection];
+    if (self.xfCleanupPending) {
+        self.xfCleanupPending = NO;
+        if (self.activeOptionKeys.count > 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self xfBeginAutoCleanupWithCompletion:self.xfCleanupCompletion];
+            });
+            return;
+        }
+    }
+    if (self.xfCleanupCompletion) {
+        void (^done)(BOOL) = [self.xfCleanupCompletion copy];
+        self.xfCleanupCompletion = nil;
+        done(success && self.activeOptionKeys.count == 0);
+    }
 }
 
-// ✅ CORREGIDO: Con logs de diagnóstico
+- (void)xfBeginAutoCleanupWithCompletion:(void (^)(BOOL))completion {
+    if (completion) self.xfCleanupCompletion = [completion copy];
+    if (!self.activeOptionKeys) [self loadPersistedActiveOptions];
+    if (self.activeOptionKeys.count == 0) {
+        if (self.xfCleanupCompletion) {
+            void (^done)(BOOL) = [self.xfCleanupCompletion copy];
+            self.xfCleanupCompletion = nil;
+            done(YES);
+        }
+        return;
+    }
+    if (self.activationInProgress || self.deactivationInProgress || self.activationAuthorizationInProgress) {
+        self.xfCleanupPending = YES;
+        return;
+    }
+    self.xfCleanupPending = NO;
+    // Same DESACTIVAR mechanism as the existing "DESACTIVAR TODOS" button.
+    // Restores the original files configured in the panel for this game.
+    self.deactivationTargetsAll = YES;
+    self.deactivationTargetKeys = [self.activeOptionKeys copy];
+    [self deactivateAllOptions];
+}
+
+- (void)xfLicenseNoLongerAuthorized:(NSNotification *)notification {
+    (void)notification;
+    if (!self.game.length || XFActiveScreens()[self.game] != self ||
+        self.activeOptionKeys.count == 0) return;
+    if (self.activationInProgress || self.deactivationInProgress) {
+        self.xfCleanupPending = YES;
+        return;
+    }
+    self.xfCleanupPending = NO;
+    [self xfBeginAutoCleanupWithCompletion:self.xfCleanupCompletion];
+}
+
 - (void)processOriginalManifestDictionary:(NSDictionary *)dictionary originals:(NSArray *)rawOriginals legacy:(BOOL)legacy {
-    NSLog(@"XITFORGE DEACT: processOriginalManifest con %lu originales, legacy=%d", (unsigned long)rawOriginals.count, legacy);
-    
     if (rawOriginals.count == 0) {
-        NSLog(@"XITFORGE DEACT: No hay originales en el servidor");
         dispatch_async(dispatch_get_main_queue(), ^{ [self finishDeactivationUIWithSuccess:YES noOriginals:YES]; });
         return;
     }
@@ -1425,15 +1482,9 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         NSString *responseBundleId = [dictionary[@"bundleId"] isKindOfClass:[NSString class]] ? dictionary[@"bundleId"] : self.bundleId;
         NSMutableArray *items = [NSMutableArray array];
         for (id rawItem in rawOriginals) {
-            if (![rawItem isKindOfClass:[NSDictionary class]]) {
-                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
-                return;
-            }
+            if (![rawItem isKindOfClass:[NSDictionary class]]) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
             NSDictionary *raw = (NSDictionary *)rawItem;
-            if (![self originalDictionaryMatchesCurrentDeactivation:raw]) {
-                NSLog(@"XITFORGE DEACT: Original no coincide con la desactivación actual, saltando");
-                continue;
-            }
+            if (![self originalDictionaryMatchesCurrentDeactivation:raw]) { continue; }
             XITForgeOption *option = [[XITForgeOption alloc] init];
             option.bundleId = [raw[@"bundleId"] isKindOfClass:[NSString class]] ? raw[@"bundleId"] : responseBundleId;
             option.route = [raw[@"route"] isKindOfClass:[NSString class]] ? raw[@"route"] : nil;
@@ -1443,27 +1494,17 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
                 NSNumber *itemId = [raw[@"id"] isKindOfClass:[NSNumber class]] ? raw[@"id"] : nil;
                 if (itemId.longLongValue > 0) option.originalFileUrl = legacy ? [NSString stringWithFormat:@"/api/app/options/%@/original-file", itemId] : [NSString stringWithFormat:@"/api/app/originals/%@/file", itemId];
             }
-            if (option.route.length == 0 || option.fileName.length == 0 || option.originalFileUrl.length == 0) {
-                NSLog(@"XITFORGE DEACT: Original incompleto: route='%@' fileName='%@' url='%@'", option.route, option.fileName, option.originalFileUrl);
-                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
-                return;
-            }
+            if (option.route.length == 0 || option.fileName.length == 0 || option.originalFileUrl.length == 0) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
             NSString *resolveError = nil;
             NSURL *destinationURL = [self destinationURLForOption:option error:&resolveError];
             NSURL *downloadURL = [self absoluteServerURLForString:option.originalFileUrl];
-            if (!destinationURL || !downloadURL) {
-                NSLog(@"XITFORGE DEACT: No se pudo resolver destino o URL: %@", resolveError);
-                [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
-                return;
-            }
+            if (!destinationURL || !downloadURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
             [items addObject:@{@"downloadURL": downloadURL, @"destinationURL": destinationURL}];
         }
         if (items.count == 0) {
-            NSLog(@"XITFORGE DEACT: Ningún original coincidió con la desactivación solicitada");
             [self finishDeactivationUIWithSuccess:YES noOriginals:YES];
             return;
         }
-        NSLog(@"XITFORGE DEACT: %lu originales coincidentes, iniciando restauración", (unsigned long)items.count);
         [self restoreOriginalItems:items index:0];
     });
 }
@@ -1476,9 +1517,12 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = @"GET";
     request.timeoutInterval = 20.0;
+    [LicenseValidator authorizeRequest:request completion:^(BOOL authorized) {
+    if (!authorized) { dispatch_async(dispatch_get_main_queue(), ^{ [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; }); return; }
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
-        if (error || !data || (http && (http.statusCode < 200 || http.statusCode > 299))) {
+        [LicenseValidator handleProtectedHTTPResponse:response];
+        if (error || !data || !http || http.statusCode < 200 || http.statusCode > 299) {
             dispatch_async(dispatch_get_main_queue(), ^{ [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; });
             return;
         }
@@ -1504,10 +1548,10 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
             if (!hasOriginal && originalURL.length == 0) continue;
             [legacyOriginals addObject:raw];
         }
-        NSLog(@"XITFORGE DEACT: Legacy fallback encontró %lu originales", (unsigned long)legacyOriginals.count);
         [self processOriginalManifestDictionary:dictionary originals:legacyOriginals legacy:YES];
     }];
     [task resume];
+    }];
 }
 
 - (void)deactivateAllOptions {
@@ -1520,9 +1564,14 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.HTTPMethod = @"GET";
     request.timeoutInterval = 20.0;
+    [LicenseValidator authorizeRequest:request completion:^(BOOL authorized) {
+    if (!authorized) { dispatch_async(dispatch_get_main_queue(), ^{
+        [self finishDeactivationUIWithSuccess:NO noOriginals:NO];
+    }); return; }
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
-        if (error || !data || (http && (http.statusCode < 200 || http.statusCode > 299))) { [self deactivateUsingLegacyOptionsFallback]; return; }
+        [LicenseValidator handleProtectedHTTPResponse:response];
+        if (error || !data || !http || http.statusCode < 200 || http.statusCode > 299) { [self deactivateUsingLegacyOptionsFallback]; return; }
         NSError *jsonError = nil;
         id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
         if (jsonError || ![json isKindOfClass:[NSDictionary class]]) { [self deactivateUsingLegacyOptionsFallback]; return; }
@@ -1533,6 +1582,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         [self processOriginalManifestDictionary:dictionary originals:rawOriginals legacy:NO];
     }];
     [task resume];
+    }];
 }
 
 - (void)restoreOriginalItems:(NSArray<NSDictionary *> *)items index:(NSUInteger)index {
@@ -1541,9 +1591,13 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     NSURL *downloadURL = item[@"downloadURL"];
     NSURL *destinationURL = item[@"destinationURL"];
     if (!downloadURL || !destinationURL) { [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; return; }
-    NSURLSessionDownloadTask *task = [[NSURLSession sharedSession] downloadTaskWithURL:downloadURL completionHandler:^(NSURL * _Nullable location, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:downloadURL];
+    [LicenseValidator authorizeRequest:request completion:^(BOOL authorized) {
+    if (!authorized) { dispatch_async(dispatch_get_main_queue(), ^{ [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; }); return; }
+    NSURLSessionDownloadTask *task = [[NSURLSession sharedSession] downloadTaskWithRequest:request completionHandler:^(NSURL * _Nullable location, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSHTTPURLResponse *http = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
-        BOOL httpOK = !http || (http.statusCode >= 200 && http.statusCode <= 299);
+        [LicenseValidator handleProtectedHTTPResponse:response];
+        BOOL httpOK = http && (http.statusCode >= 200 && http.statusCode <= 299);
         if (error || !location || !httpOK) {
             dispatch_async(dispatch_get_main_queue(), ^{ [self finishDeactivationUIWithSuccess:NO noOriginals:NO]; });
             return;
@@ -1563,6 +1617,7 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
         dispatch_async(dispatch_get_main_queue(), ^{ [self restoreOriginalItems:items index:(index + 1)]; });
     }];
     [task resume];
+    }];
 }
 
 - (NSString *)safePathComponent:(NSString *)value {
@@ -1639,12 +1694,23 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
     configuration.timeoutIntervalForRequest = 30.0;
     configuration.timeoutIntervalForResource = 60.0;
     self.downloadSession = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:[NSOperationQueue mainQueue]];
-    NSURLSessionDownloadTask *task = [self.downloadSession downloadTaskWithURL:url];
-    task.taskDescription = [NSString stringWithFormat:@"%ld|%@", (long)option.optionId.integerValue, destinationURL.path];
-    [task resume];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    [LicenseValidator authorizeRequest:request completion:^(BOOL authorized) {
+        if (!authorized) { [self showResult:@"Licencia no autorizada. Inicia sesión nuevamente." success:NO]; return; }
+        NSURLSessionDownloadTask *task = [self.downloadSession downloadTaskWithRequest:request];
+        task.taskDescription = [NSString stringWithFormat:@"%ld|%@", (long)option.optionId.integerValue, destinationURL.path];
+        [task resume];
+    }];
 }
 
 - (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location {
+    [LicenseValidator handleProtectedHTTPResponse:downloadTask.response];
+    NSHTTPURLResponse *http = [downloadTask.response isKindOfClass:[NSHTTPURLResponse class]]
+        ? (NSHTTPURLResponse *)downloadTask.response : nil;
+    if (!http || http.statusCode < 200 || http.statusCode >= 300) {
+        [self showResult:@"La descarga fue rechazada por el servidor." success:NO];
+        return;
+    }
     NSString *description = downloadTask.taskDescription;
     NSArray *parts = [description componentsSeparatedByString:@"|"];
     if (parts.count < 2) { [self showResult:@"No se pudo determinar el destino del archivo." success:NO]; return; }
@@ -1702,6 +1768,41 @@ static NSURL *XITForgeExistingDirectoryChild(NSURL *parent, NSString *requestedN
 @end
 
 @implementation HomeViewController
+
++ (void)xfDeactivatePersistedOptionsWithCompletion:(void (^)(BOOL))completion {
+    NSArray<NSString *> *games = @[@"freefire_normal", @"freefire_max"];
+    // Run sequentially: one restore flow per game, never report success early.
+    __block void (^next)(NSUInteger, BOOL) = nil;
+    next = ^(NSUInteger index, BOOL previousSuccess) {
+        if (index >= games.count) {
+            void (^finish)(BOOL) = [completion copy];
+            next = nil;
+            if (finish) finish(previousSuccess);
+            return;
+        }
+        NSString *game = games[index];
+        NSArray *saved = [[NSUserDefaults standardUserDefaults]
+            arrayForKey:[NSString stringWithFormat:@"XITFORGE_ACTIVE_OPTIONS_%@", game]];
+        if (saved.count == 0) {
+            next(index + 1, previousSuccess);
+            return;
+        }
+        XITForgeOptionsViewController *controller = XFActiveScreens()[game];
+        if (!controller) {
+            controller = [[XITForgeOptionsViewController alloc] init];
+            controller.game = game;
+            controller.bundleId = [game isEqualToString:@"freefire_max"]
+                ? @"com.dts.freefiremax" : @"com.dts.freefireth";
+            // Do not load the UI or request premium options with an expired key.
+            [controller loadPersistedActiveOptions];
+            XFActiveScreens()[game] = controller;
+        }
+        [controller xfBeginAutoCleanupWithCompletion:^(BOOL succeeded) {
+            next(index + 1, previousSuccess && succeeded);
+        }];
+    };
+    next(0, YES);
+}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
